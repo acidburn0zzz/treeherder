@@ -33,7 +33,7 @@
     "json-e": "3.0.2",
     "json-schema-defaults": "0.4.0",
     "lodash": "4.17.20",
-    "moment": "2.24.0",
+    "moment": "2.29.4",
     "neutrino": "9.2.0",
     "numeral": "2.0.6",
     "pako": "1.0.11",
