@@ -21,7 +21,7 @@ export const formatModelError = function formatModelError(e, message) {
   }
 
   // If there is nothing in the server message use the HTTP response status.
-  const errorMessage = `${(e.data && e.data.detail) || e.status} ${
+  const errorMessage = `${(e.data?.detail) || e.status} ${
     e.statusText
   }`;
   return `${message}: ${errorMessage}`;
@@ -45,14 +45,23 @@ export const formatTaskclusterError = function formatTaskclusterError(e) {
 };
 
 export const processErrorMessage = function processErrorMessage(error, status) {
+  let errorMessage = '';
+
   if (status >= 500) {
-    return 'There was a problem retrieving the data. Please try again in a minute.';
+    errorMessage +=
+      'There was a problem retrieving the data. Please try again in a minute.';
+  }
+
+  if (status === 400) {
+    errorMessage += 'The action resulted in a bad request.';
   }
 
   if (error instanceof Object) {
     const key = Object.keys(error);
 
-    return `${key}: ${error[key]}`;
+    errorMessage += ` ${key}: ${error[key]}`;
+  } else if (error) {
+    errorMessage += error;
   }
-  return error;
+  return errorMessage ? errorMessage.trim() : error;
 };

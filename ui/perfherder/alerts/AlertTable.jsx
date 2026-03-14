@@ -1,9 +1,13 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Container, Form, FormGroup, Label, Input, Table } from 'reactstrap';
+import { Container, Form, Table, Row, Col } from 'react-bootstrap';
 import orderBy from 'lodash/orderBy';
 
-import { alertStatusMap } from '../constants';
+import {
+  alertStatusMap,
+  maximumVisibleAlertSummaryRows,
+  browsertimeId,
+} from '../perf-helpers/constants';
 import {
   genericErrorMessage,
   errorMessageClass,
@@ -13,15 +17,20 @@ import {
   getInitializedAlerts,
   containsText,
   updateAlertSummary,
-} from '../helpers';
+} from '../perf-helpers/helpers';
 import TruncatedText from '../../shared/TruncatedText';
 import ErrorBoundary from '../../shared/ErrorBoundary';
+import TableColumnHeader from '../shared/TableColumnHeader';
+import SortButtonDisabled from '../shared/SortButtonDisabled';
+import { tableSort, getNextSort, sort, sortTables } from '../perf-helpers/sort';
 
+import AlertTableRow from './AlertTableRow';
 import AlertHeader from './AlertHeader';
 import StatusDropdown from './StatusDropdown';
-import AlertTableRow from './AlertTableRow';
 import DownstreamSummary from './DownstreamSummary';
 import AlertActionPanel from './AlertActionPanel';
+import SelectAlertsDropdown from './SelectAlertsDropdown';
+import CollapsableRows from './CollapsableRows';
 
 export default class AlertTable extends React.Component {
   constructor(props) {
@@ -30,8 +39,46 @@ export default class AlertTable extends React.Component {
       alertSummary: null,
       downstreamIds: [],
       filteredAlerts: [],
+      filteredAndSortedAlerts: [],
       allSelected: false,
       selectedAlerts: [],
+      tableConfig: {
+        Test: {
+          name: 'Test',
+          sortValue: 'title',
+          currentSort: tableSort.default,
+        },
+        Platform: {
+          name: 'Platform',
+          sortValue: 'machine_platform',
+          currentSort: tableSort.default,
+        },
+        TagsOptions: {
+          name: 'Tags & Options',
+          sortValue: 'tags',
+          currentSort: tableSort.default,
+        },
+        Magnitude: {
+          name: 'Magnitude of Change',
+          sortValue: 'amount_abs',
+          currentSort: tableSort.default,
+        },
+        Confidence: {
+          name: 'Confidence',
+          sortValue: 't_value',
+          currentSort: tableSort.default,
+        },
+        DebuggingInformation: {
+          name: 'Debug Tools',
+          sortValue: '',
+          currentSort: tableSort.default,
+        },
+        NoiseProfile: {
+          name: 'Information',
+          sortValue: 'noise_profile',
+          currentSort: tableSort.default,
+        },
+      },
     };
   }
 
@@ -51,7 +98,7 @@ export default class AlertTable extends React.Component {
   }
 
   processAlerts = () => {
-    const { alertSummary, optionCollectionMap } = this.props;
+    const { alertSummary = null, optionCollectionMap } = this.props;
 
     const alerts = getInitializedAlerts(alertSummary, optionCollectionMap);
     alertSummary.alerts = orderBy(
@@ -90,7 +137,6 @@ export default class AlertTable extends React.Component {
 
   filterAlert = (alert) => {
     const {
-      hideImprovements,
       hideDownstream,
       hideAssignedToOthers,
       filterText,
@@ -98,7 +144,6 @@ export default class AlertTable extends React.Component {
     const { username } = this.props.user;
     const { alertSummary } = this.state;
 
-    const unconcealableRegression = !hideImprovements || alert.is_regression;
     const notRelatedDownstream =
       alert.summary_id === alertSummary.id ||
       alert.status !== alertStatusMap.downstream;
@@ -114,7 +159,6 @@ export default class AlertTable extends React.Component {
       hideAssignedToOthers && alertSummary.assignee_username !== username;
 
     const matchesFilters =
-      unconcealableRegression &&
       notRelatedDownstream &&
       !concealableReassigned &&
       !concealableDownstream &&
@@ -124,7 +168,7 @@ export default class AlertTable extends React.Component {
     if (!filterText) return matchesFilters;
 
     const textToTest = `${alert.title} ${
-      alertSummary.bug_number && alertSummary.bug_number.toString()
+      alertSummary.bug_number?.toString()
     } ${alertSummary.revision.toString()}`;
 
     // searching with filter input and one or more metricFilter buttons on
@@ -132,26 +176,55 @@ export default class AlertTable extends React.Component {
     return containsText(textToTest, filterText) && matchesFilters;
   };
 
+  getAlertsSortedByDefault = (filteredAlerts) => {
+    const fields = [
+      'starred',
+      'backfill_record',
+      'is_regression',
+      't_value',
+      'amount_abs',
+      'title',
+    ];
+    const sortOrders = ['desc', 'asc', 'desc', 'desc', 'desc', 'asc'];
+    return orderBy(filteredAlerts, fields, sortOrders);
+  };
+
   updateFilteredAlerts = () => {
-    const { alertSummary } = this.state;
+    const { alertSummary, tableConfig } = this.state;
+    Object.keys(tableConfig).forEach((key) => {
+      tableConfig[key].currentSort = tableSort.default;
+    });
 
     const filteredAlerts = alertSummary.alerts.filter((alert) =>
       this.filterAlert(alert),
     );
-    this.setState({ filteredAlerts });
+    const filteredAndSortedAlerts = this.getAlertsSortedByDefault(
+      filteredAlerts,
+    );
+    this.setState({
+      tableConfig,
+      filteredAlerts,
+      filteredAndSortedAlerts,
+      allSelected: false,
+      selectedAlerts: [],
+    });
   };
 
   updateAssignee = async (newAssigneeUsername) => {
     const {
-      updateAlertSummary,
+      updateAlertSummary: updateAlertSummaryProp = updateAlertSummary,
       updateViewState,
       fetchAlertSummaries,
     } = this.props;
+    const updateAlertSummaryFunc = updateAlertSummaryProp;
     const { alertSummary } = this.state;
 
-    const { data, failureStatus } = await updateAlertSummary(alertSummary.id, {
-      assignee_username: newAssigneeUsername,
-    });
+    const { data, failureStatus } = await updateAlertSummaryFunc(
+      alertSummary.id,
+      {
+        assignee_username: newAssigneeUsername,
+      },
+    );
 
     if (!failureStatus) {
       // now refresh UI, by syncing with backend
@@ -167,17 +240,74 @@ export default class AlertTable extends React.Component {
     return { failureStatus };
   };
 
+  changeRevision = async (newRevisionTo, newRevisionFrom) => {
+    const {
+      updateAlertSummary: updateAlertSummaryProp = updateAlertSummary,
+      updateViewState,
+      fetchAlertSummaries,
+    } = this.props;
+    const updateAlertSummaryFunc = updateAlertSummaryProp;
+    const { alertSummary } = this.state;
+    const { data, failureStatus } = await updateAlertSummaryFunc(
+      alertSummary.id,
+      {
+        revision: newRevisionTo,
+        prev_push_revision: newRevisionFrom,
+      },
+    );
+
+    if (!failureStatus) {
+      // now refresh UI, by syncing with backend
+      fetchAlertSummaries(alertSummary.id);
+    } else {
+      updateViewState({
+        errorMessages: [`Failed to set revisions. (${data})`],
+      });
+    }
+
+    return { failureStatus };
+  };
+
+  setSelectedAlerts = ({ selectedAlerts, allSelected }) =>
+    this.setState({
+      selectedAlerts,
+      allSelected,
+    });
+
+  onChangeSort = (currentColumn) => {
+    const { tableConfig } = this.state;
+    const { filteredAlerts } = this.state;
+    const { default: defaultSort } = tableSort;
+    const { currentSort, sortValue } = currentColumn;
+    const nextSort = getNextSort(currentSort);
+
+    Object.keys(tableConfig).forEach((key) => {
+      tableConfig[key].currentSort = defaultSort;
+    });
+    currentColumn.currentSort = nextSort;
+    let filteredAndSortedAlerts = this.getAlertsSortedByDefault(filteredAlerts);
+    if (nextSort !== defaultSort) {
+      filteredAndSortedAlerts = sort(
+        sortValue,
+        nextSort,
+        filteredAlerts,
+        sortTables.alert,
+      );
+    }
+
+    this.setState({ filteredAndSortedAlerts, tableConfig });
+  };
+
   render() {
     const {
       user,
       projects,
       frameworks,
       alertSummaries,
-      issueTrackers,
+      issueTrackers = [],
       fetchAlertSummaries,
       updateViewState,
-      bugTemplate,
-      modifyAlert,
+      modifyAlert = undefined,
       performanceTags,
     } = this.props;
     const {
@@ -186,6 +316,8 @@ export default class AlertTable extends React.Component {
       filteredAlerts,
       allSelected,
       selectedAlerts,
+      tableConfig,
+      filteredAndSortedAlerts,
     } = this.state;
 
     const downstreamIdsLength = downstreamIds.length;
@@ -202,82 +334,133 @@ export default class AlertTable extends React.Component {
         >
           {filteredAlerts.length > 0 && alertSummary && (
             <Form>
-              <Table className="compare-table mb-0">
-                <thead>
-                  <tr className="bg-lightgray border">
-                    <th
-                      colSpan="9"
-                      className="text-left alert-summary-header-element"
-                    >
-                      <FormGroup check>
-                        <Label check className="pl-1">
-                          <Input
-                            data-testid={`alert summary ${alertSummary.id.toString()} checkbox`}
-                            aria-labelledby={`alert summary ${alertSummary.id.toString()} title`}
-                            type="checkbox"
-                            checked={allSelected}
-                            disabled={!user.isStaff}
-                            onChange={() =>
-                              this.setState({
-                                allSelected: !allSelected,
-                                selectedAlerts: !allSelected
-                                  ? [...alertSummary.alerts]
-                                  : [],
-                              })
-                            }
-                          />
-                          <AlertHeader
-                            frameworks={frameworks}
-                            alertSummary={alertSummary}
-                            repoModel={repoModel}
-                            issueTrackers={issueTrackers}
-                            user={user}
-                            updateAssignee={this.updateAssignee}
-                          />
-                        </Label>
-                      </FormGroup>
-                    </th>
-                    <th className="table-width-sm align-top font-weight-normal">
-                      <StatusDropdown
-                        alertSummary={alertSummary}
-                        updateState={(state) => this.setState(state)}
-                        repoModel={repoModel}
-                        updateViewState={updateViewState}
-                        issueTrackers={issueTrackers}
-                        bugTemplate={bugTemplate}
+              <Container fluid className="bg-lightgray border">
+                <Row className="px-0 max-width-default">
+                  <Col
+                    xs={10}
+                    className="text-left alert-summary-header-element"
+                  >
+                    <Form.Group className="d-inline-flex align-items-top">
+                      <SelectAlertsDropdown
+                        setSelectedAlerts={this.setSelectedAlerts}
                         user={user}
                         filteredAlerts={filteredAlerts}
+                        allSelected={allSelected}
+                        alertSummaryId={alertSummary.id.toString()}
+                      />
+                      <AlertHeader
                         frameworks={frameworks}
-                        performanceTags={performanceTags}
+                        alertSummary={alertSummary}
+                        repoModel={repoModel}
+                        issueTrackers={issueTrackers}
+                        user={user}
+                        updateAssignee={this.updateAssignee}
+                        changeRevision={this.changeRevision}
+                        updateViewState={updateViewState}
+                      />
+                    </Form.Group>
+                  </Col>
+                  <Col className="d-flex justify-content-end p-2">
+                    <StatusDropdown
+                      alertSummary={alertSummary}
+                      updateState={(state) => this.setState(state)}
+                      repoModel={repoModel}
+                      updateViewState={updateViewState}
+                      issueTrackers={issueTrackers}
+                      user={user}
+                      filteredAlerts={filteredAlerts}
+                      frameworks={frameworks}
+                      performanceTags={performanceTags}
+                    />
+                  </Col>
+                </Row>
+              </Container>
+
+              <Table className="compare-table mb-0">
+                <tbody>
+                  <tr className="border subtest-header">
+                    <th className="table-width-xs" aria-label="Select alerts">
+                      {' '}
+                    </th>
+                    <th aria-label="Star alert or open graph"> </th>
+                    <th className="align-middle">
+                      <TableColumnHeader
+                        column={tableConfig.Test}
+                        data-testid={`${alertSummary.id} ${tableConfig.Test}`}
+                        onChangeSort={this.onChangeSort}
+                      />
+                    </th>
+                    <th className="align-middle">
+                      <TableColumnHeader
+                        column={tableConfig.Platform}
+                        onChangeSort={this.onChangeSort}
+                      />
+                    </th>
+                    {alertSummary.framework === browsertimeId && (
+                      <th className="align-middle text-nowrap">
+                        <span
+                          data-testid={`${alertSummary.id} ${tableConfig.DebuggingInformation.name}`}
+                        >
+                          {tableConfig.DebuggingInformation.name}
+                        </span>
+                        <SortButtonDisabled
+                          column={tableConfig.DebuggingInformation}
+                        />
+                      </th>
+                    )}
+                    <th className="align-middle">
+                      <TableColumnHeader
+                        column={tableConfig.NoiseProfile}
+                        onChangeSort={this.onChangeSort}
+                      />
+                    </th>
+                    <th className="align-middle text-nowrap">
+                      <span>{tableConfig.TagsOptions.name}</span>
+                      <SortButtonDisabled column={tableConfig.TagsOptions} />
+                    </th>
+                    <th className="align-middle">
+                      <TableColumnHeader
+                        column={tableConfig.Magnitude}
+                        onChangeSort={this.onChangeSort}
+                      />
+                    </th>
+                    <th className="align-middle">
+                      <TableColumnHeader
+                        column={tableConfig.Confidence}
+                        onChangeSort={this.onChangeSort}
                       />
                     </th>
                   </tr>
-                </thead>
-                <tbody>
-                  <tr className="border">
-                    <th> </th>
-                    <th> </th>
-                    <th>Test and platform</th>
-                    <th>Tags</th>
-                    <th>Previous Value</th>
-                    <th> </th>
-                    <th>New Value</th>
-                    <th>Absolute Difference</th>
-                    <th>Magnitude of Change</th>
-                    <th>Confidence</th>
-                  </tr>
-                  {filteredAlerts.map((alert) => (
-                    <AlertTableRow
-                      key={alert.id}
+                  {filteredAndSortedAlerts.length <=
+                    maximumVisibleAlertSummaryRows &&
+                    filteredAndSortedAlerts.map((alert) => (
+                      <AlertTableRow
+                        key={alert.id}
+                        alertSummary={alertSummary}
+                        alert={alert}
+                        frameworks={frameworks}
+                        user={user}
+                        updateSelectedAlerts={(alerts) => this.setState(alerts)}
+                        selectedAlerts={selectedAlerts}
+                        updateViewState={updateViewState}
+                        modifyAlert={modifyAlert}
+                        fetchAlertSummaries={fetchAlertSummaries}
+                      />
+                    ))}
+                  {filteredAndSortedAlerts.length >
+                    maximumVisibleAlertSummaryRows && (
+                    <CollapsableRows
+                      filteredAndSortedAlerts={filteredAndSortedAlerts}
                       alertSummary={alertSummary}
-                      alert={alert}
+                      frameworks={frameworks}
                       user={user}
                       updateSelectedAlerts={(alerts) => this.setState(alerts)}
                       selectedAlerts={selectedAlerts}
                       updateViewState={updateViewState}
                       modifyAlert={modifyAlert}
+                      fetchAlertSummaries={fetchAlertSummaries}
                     />
-                  ))}
+                  )}
                   {downstreamIdsLength > 0 && (
                     <tr
                       className={`${
@@ -288,7 +471,7 @@ export default class AlertTable extends React.Component {
                     >
                       <td
                         colSpan="9"
-                        className="text-left text-muted pl-3 py-4"
+                        className="text-left text-muted ps-3 py-4"
                       >
                         <span className="font-weight-bold">
                           Downstream alert summaries:{' '}
@@ -314,7 +497,7 @@ export default class AlertTable extends React.Component {
                   {alertSummary.notes && (
                     <div className="bg-white px-3 py-4">
                       <TruncatedText
-                        color="darker-info"
+                        variant="darker-info"
                         title="Notes: "
                         maxLength={167}
                         text={alertSummary.notes}
@@ -354,24 +537,12 @@ AlertTable.propTypes = {
   filters: PropTypes.shape({
     filterText: PropTypes.string,
     hideDownstream: PropTypes.bool,
-    hideImprovements: PropTypes.bool,
     hideAssignedToOthers: PropTypes.bool,
   }).isRequired,
   fetchAlertSummaries: PropTypes.func.isRequired,
   updateViewState: PropTypes.func.isRequired,
-  bugTemplate: PropTypes.shape({}),
   modifyAlert: PropTypes.func,
   updateAlertSummary: PropTypes.func,
   projects: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   performanceTags: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
-};
-
-AlertTable.defaultProps = {
-  alertSummary: null,
-  issueTrackers: [],
-  bugTemplate: null,
-  modifyAlert: undefined,
-  // leverage dependency injection
-  // to improve code testability
-  updateAlertSummary,
 };

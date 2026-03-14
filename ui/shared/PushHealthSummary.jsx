@@ -1,84 +1,114 @@
 import React, { PureComponent } from 'react';
 import PropTypes from 'prop-types';
-import { Spinner, Table } from 'reactstrap';
-import { faHeart, faExternalLinkAlt } from '@fortawesome/free-solid-svg-icons';
+import { Col, Row } from 'react-bootstrap';
+import { faHeart } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
 import broken from '../img/push-health-broken.png';
 import ok from '../img/push-health-ok.png';
 import { getPushHealthUrl } from '../helpers/url';
 
+import StatusButton from './StatusButton';
+
 class PushHealthSummary extends PureComponent {
   render() {
-    const { healthStatus, revision, repoName } = this.props;
+    const { healthStatus = {}, revision, repoName } = this.props;
     const status = healthStatus || {};
     const {
       needInvestigation,
       testFailureCount,
+      testInProgressCount,
       buildFailureCount,
       lintFailureCount,
+      buildInProgressCount,
+      lintingInProgressCount,
+      metrics,
     } = status;
-    const heartSize = 25;
+    const { linting, builds, tests } = metrics;
+    const heartSize = 20;
+    const pushHealthUrl = getPushHealthUrl({ revision, repo: repoName });
+    const noResultsFound =
+      metrics &&
+      linting.result === 'none' &&
+      builds.result === 'none' &&
+      tests.result === 'none';
 
+    if (noResultsFound) return <React.Fragment />;
     return (
-      <div>
+      <Col xs="8" className="ps-0">
         <span className="d-flex">
           <a
-            href={getPushHealthUrl({ revision, repo: repoName })}
+            href={pushHealthUrl}
             title="View Push Health details for this push"
           >
-            <div>
+            <div
+              className={`p-2 text-darker-info ${
+                needInvestigation && 'button-border border-darker-info'
+              }`}
+            >
               {healthStatus !== null ? (
                 <img
                   src={needInvestigation ? broken : ok}
                   alt={needInvestigation ? 'Broken' : 'OK'}
                   width={heartSize}
                   height={heartSize}
-                  className="mr-1"
+                  className="me-1"
                 />
               ) : (
-                <span className="ml-1 text-darker-secondary">
+                <span className="mx-1 text-darker-secondary">
                   <FontAwesomeIcon
                     icon={faHeart}
                     height={heartSize}
                     width={heartSize}
-                    color="darker-secondary"
+                    variant="darker-secondary"
                   />
                 </span>
               )}
-              Push Health Summary
-              <FontAwesomeIcon
-                icon={faExternalLinkAlt}
-                className="ml-1 icon-superscript"
-              />
+              {needInvestigation ? 'Debug with Push Health' : 'Push Health'}
             </div>
           </a>
         </span>
-        {healthStatus ? (
-          <Table className="ml-3 w-100 small-text row-height-tight">
-            <tbody>
-              <tr className={`${buildFailureCount ? 'font-weight-bold' : ''}`}>
-                <td className="py-1">Build Failures</td>
-                <td className="py-1">{buildFailureCount}</td>
-              </tr>
-              <tr
-                className={`${testFailureCount ? 'font-weight-bold' : ''} py-1`}
-              >
-                <td className="py-1">Test Failures</td>
-                <td className="py-1">{testFailureCount}</td>
-              </tr>
-              <tr
-                className={`${lintFailureCount ? 'font-weight-bold' : ''} py-1`}
-              >
-                <td className="py-1">Linting Failures</td>
-                <td className="py-1">{lintFailureCount}</td>
-              </tr>
-            </tbody>
-          </Table>
-        ) : (
-          <Spinner />
+        {healthStatus && (
+          <Row className="ms-3 mt-2">
+            <Col>
+              {linting.result !== 'none' && (
+                <StatusButton
+                  failureCount={lintFailureCount}
+                  inProgressCount={lintingInProgressCount}
+                  status={linting.result}
+                  title="Linting"
+                  repo={repoName}
+                  revision={revision}
+                />
+              )}
+            </Col>
+            <Col>
+              {builds.result !== 'none' && (
+                <StatusButton
+                  failureCount={buildFailureCount}
+                  inProgressCount={buildInProgressCount}
+                  status={builds.result}
+                  title="Builds"
+                  repo={repoName}
+                  revision={revision}
+                />
+              )}
+            </Col>
+            <Col>
+              {tests.result !== 'none' && (
+                <StatusButton
+                  failureCount={testFailureCount}
+                  inProgressCount={testInProgressCount}
+                  status={tests.result}
+                  title="Tests"
+                  repo={repoName}
+                  revision={revision}
+                />
+              )}
+            </Col>
+          </Row>
         )}
-      </div>
+      </Col>
     );
   }
 }
@@ -91,11 +121,9 @@ PushHealthSummary.propTypes = {
     testFailureCount: PropTypes.number,
     buildFailureCount: PropTypes.number,
     lintFailureCount: PropTypes.number,
+    buildInProgressCount: PropTypes.number,
+    lintingInProgressCount: PropTypes.number,
   }),
-};
-
-PushHealthSummary.defaultProps = {
-  healthStatus: {},
 };
 
 export default PushHealthSummary;

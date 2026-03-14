@@ -44,6 +44,14 @@ h1 {
   background: #f8f8f8;
 }
 
+#perf-main {
+  padding-top: 4.5rem;
+}
+
+.btn-view-nav {
+  font-size: 1rem;
+}
+
 .graph-chooser {
   flex: none;
   width: 300px;
@@ -69,10 +77,11 @@ h1 {
 }
 
 .show-hide-check {
-  float: right;
-  position: static;
-  margin-right: 13px !important;
-  margin-top: -27px;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
+  margin: 0;
+  cursor: pointer;
 }
 
 .graph-right-padding {
@@ -304,10 +313,14 @@ th {
 }
 
 .compare-table .result-links span,
-.compare-table .result-links a,
 .compare-table .result-links button {
   color: transparent;
   transition: color 150ms ease-in-out;
+}
+
+.compare-table .result-links a,
+.compare-table .subtest-header a {
+  color: #23527c;
 }
 
 .retrigger-btn {
@@ -318,7 +331,6 @@ th {
   transition: visibility 150ms ease-in-out;
 }
 
-.compare-table tr:hover .result-links a,
 .compare-table tr:hover .result-links button,
 .compare-table tr:focus-within .result-links a,
 .compare-table tr:focus-within .result-links button {
@@ -333,6 +345,14 @@ th {
   position: sticky;
   bottom: 0;
   z-index: 900;
+}
+
+.sticky-scroll-nav-top {
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 998;
+  padding-top: 3rem;
 }
 
 .alerts-container {
@@ -444,9 +464,24 @@ button:disabled {
 }
 
 li.pagination-active.active > button {
-  background-color: lightgray !important;
-  border-color: lightgray !important;
-  color: black !important;
+  background-color: lightgray;
+  border-color: lightgray;
+  color: black;
+}
+
+.page-item.disabled {
+  cursor: not-allowed;
+}
+
+.page-item.disabled .page-link {
+  color: lightgray;
+}
+
+/* Make the size of pagination link consistent */
+.page-link {
+  min-width: 2.5rem;
+  padding-left: 0;
+  padding-right: 0;
 }
 
 /* graph colors */
@@ -528,4 +563,261 @@ li.pagination-active.active > button {
 .table-graphs-view .rt-td:hover .job-links,
 .table-graphs-view .rt-td:focus-within .job-links {
   opacity: 1;
+}
+
+.alert-docs a:visited,
+.legend-docs a:visited {
+  color: #337ab7;
+}
+
+.disabled-button {
+  border: 1px solid transparent;
+  box-sizing: border-box;
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+
+.cursor-pointer {
+  cursor: pointer;
+}
+
+.information-container {
+  display: flex;
+  flex-direction: column-reverse;
+  align-items: center;
+}
+
+.information-container .option {
+  display: flex;
+  align-items: center;
+}
+
+.information-container .option .icon {
+  margin: 0px 2px 5px 2px;
+  color: #dc3545;
+}
+
+.information-container .option .icon-green-flame {
+  color: #2da745;
+}
+
+.information-container .option .icon-plus {
+  font-size: 12px;
+  color: #dc3545;
+  margin-left: 5px;
+}
+
+.download-json-container {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 15px;
+}
+
+.download-json-container .btn {
+  margin-left: 5px;
+}
+
+.download-json-container .download-button {
+  background-color: transparent;
+  color: #1f7d8e;
+}
+
+.download-json-container .download-button:hover {
+  background-color: #1f7d8e;
+  color: white;
+}
+
+.download-json-container .download-json-icon {
+  margin-right: 10px;
+}
+
+.bottom-pagination-container {
+  margin-top: 30px;
+}
+
+.icon-container {
+  margin: 0px 5px;
+  padding: 0px 3px 0px 3px;
+}
+
+.active-platform {
+  border: 1px solid;
+  border-radius: 3px;
+  background-color: #d3d3d3;
+  padding: 3px;
+}
+
+.due-date-container {
+  width: 50px;
+}
+
+.due-date-container .due-date-ok {
+  color: #2da745;
+}
+
+.due-date-container .due-date-today {
+  color: #dc7835;
+}
+
+.due-date-container .due-date-overdue {
+  color: #dc3545;
+}
+
+.due-date-container .due-date-ready {
+  color: #2da745;
+}
+
+.status-drop-down-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  flex-direction: row-reverse;
+}
+
+.clock-container {
+  margin-top: 5px;
+  margin-left: 23px;
+}
+
+.tests-table .rt-tr-group {
+  flex: initial;
+}
+
+.alert-title-container {
+  width: 250px;
+}
+
+.alert-title-container .alert-title {
+  overflow-wrap: break-word;
+}
+
+.tags-and-options-container {
+  width: fit-content;
+}
+
+.tags-and-options-container span {
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.tags-and-options-td {
+  padding: 0.75rem 0px 0px 0px;
+}
+
+.multiline-text {
+  white-space: pre-line;
+}
+
+.pagination .page-item.active .page-link {
+  background-color: #17a2b8;
+  border-color: #17a2b8;
+}
+
+/* Custom pagination styles to hide default Bootstrap text labels */
+.custom-pagination .page-link {
+  position: relative;
+  min-width: 2.5rem;
+  height: 2.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  background-color: white;
+  border-color: #17a2b8;
+  color: #17a2b8;
+}
+
+.custom-pagination .page-link:hover {
+  background-color: #f8f9fa;
+  border-color: #17a2b8;
+  color: #17a2b8;
+}
+
+.custom-pagination .page-item.active .page-link {
+  background-color: #17a2b8;
+  border-color: #17a2b8;
+  color: white;
+}
+
+.custom-pagination .page-item.disabled .page-link {
+  background-color: white;
+  border-color: #dee2e6;
+  color: #6c757d;
+  opacity: 0.65;
+}
+
+/* Ensure chevron symbols are properly sized and centered */
+.custom-pagination .page-link span[aria-hidden='true'] {
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Hide screen reader text visually but keep it for accessibility */
+.custom-pagination .sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Hide any remaining Bootstrap default text */
+.custom-pagination .page-link::before,
+.custom-pagination .page-link::after {
+  display: none;
+}
+
+/* Force hide any text nodes that might appear */
+.custom-pagination .page-item:first-child .page-link,
+.custom-pagination .page-item:nth-child(2) .page-link,
+.custom-pagination .page-item:nth-last-child(2) .page-link,
+.custom-pagination .page-item:last-child .page-link {
+  font-size: 0;
+}
+
+.custom-pagination .page-item:first-child .page-link span[aria-hidden='true'],
+.custom-pagination .page-item:nth-child(2) .page-link span[aria-hidden='true'],
+.custom-pagination
+  .page-item:nth-last-child(2)
+  .page-link
+  span[aria-hidden='true'],
+.custom-pagination .page-item:last-child .page-link span[aria-hidden='true'] {
+  font-size: 16px;
+}
+
+/* Hide the "(current)" text that appears on active page items */
+.custom-pagination .page-item.active .page-link {
+  text-indent: -9999px;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Show only the page number for active items */
+.custom-pagination .page-item.active .page-link span[aria-hidden] {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-indent: 0;
+  font-size: 14px;
+  color: white;
+}
+
+/* Consistent checkbox sizing for alerts table */
+.compare-table .form-check-input {
+  width: 0.8125rem;
+  height: 0.8125rem;
+  margin-top: 0.125em;
+  cursor: pointer;
+}
+
+.compare-table .form-check-input:disabled {
+  cursor: not-allowed;
 }

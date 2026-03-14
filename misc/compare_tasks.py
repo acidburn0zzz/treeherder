@@ -1,12 +1,12 @@
 #!/usr/bin/env python
-""" Script to compare tasks from pushes on different Treeherder instances"""
+"""Script to compare tasks from pushes on different Treeherder instances"""
+
 import argparse
 import logging
 import pprint
 import uuid
 
 import slugid
-
 from deepdiff import DeepDiff
 from thclient import TreeherderClient
 
@@ -53,8 +53,8 @@ def print_url_to_taskcluster(job_guid):
     job_guid = job["job_guid"]
     (decoded_task_id, _) = job_guid.split("/")
     # As of slugid v2, slugid.encode() returns a string not bytestring under Python 3.
-    taskId = slugid.encode(uuid.UUID(decoded_task_id))
-    logger.info("https://taskcluster-ui.herokuapp.com/tasks/%s", taskId)
+    task_id = slugid.encode(uuid.UUID(decoded_task_id))
+    logger.info("https://firefox-ci-tc.services.mozilla.com/tasks/%s", task_id)
 
 
 if __name__ == "__main__":
@@ -95,13 +95,13 @@ if __name__ == "__main__":
             th_instance_not_found.append(job)
         else:
             # You can use this value in a url with &selectedJob=
-            jobId = job["id"]
+            job_id = job["id"]
             remove_some_attributes(job, production_job)
 
             differences = DeepDiff(job, production_dict[job["job_guid"]])
             if differences:
                 pprint.pprint(differences)
-                logger.info(jobId)
+                logger.info(job_id)
             else:
                 # Delete jobs that don"t have any differences
                 del production_dict[job["job_guid"]]
@@ -111,13 +111,13 @@ if __name__ == "__main__":
 
     if production_dict:
         logger.info(
-            "There are the first 10 production jobs we do not have th_instancely. Follow the link to investigate."
+            "There are the first 10 production jobs we do not have instance. Follow the link to investigate."
         )
         for job in list(production_dict.values())[0:10]:
             print_url_to_taskcluster(job["job_guid"])
 
     if th_instance_not_found:
-        logger.info("Number of jobs not found th_instancely: %s jobs", len(th_instance_not_found))
+        logger.info("Number of jobs not found instance: %s jobs", len(th_instance_not_found))
         for job in th_instance_not_found:
             print_url_to_taskcluster(job["job_guid"])
 

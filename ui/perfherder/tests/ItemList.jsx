@@ -1,19 +1,19 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
 
 export default function ItemList(props) {
-  const { items, maxSeen } = props;
+  const { items, maxSeen = 2 } = props;
 
   return (
     <span>
       {items.slice(0, maxSeen).map((item) => (
-        <span key={item} className="item-badge mr-1">
+        <span key={item} className="item-badge me-1">
           {item}
         </span>
       ))}
       {items.length > maxSeen && (
         <span
-          className="item-badge mr-1"
+          className="item-badge me-1"
           title={items.slice(maxSeen).join(', ')}
         >
           ...
@@ -26,8 +26,4 @@ export default function ItemList(props) {
 ItemList.propTypes = {
   items: PropTypes.arrayOf(PropTypes.string).isRequired,
   maxSeen: PropTypes.number,
-};
-
-ItemList.defaultProps = {
-  maxSeen: 2,
 };

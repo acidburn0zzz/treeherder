@@ -1,4 +1,4 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
 
 export default function ErrorsList(props) {
@@ -11,7 +11,7 @@ export default function ErrorsList(props) {
         rel="noopener noreferrer"
         href={error.logViewerUrl}
       >
-        <span className="ml-1">View log</span>
+        <span className="ms-1">View log</span>
       </a>
     </li>
   ));
@@ -27,5 +27,8 @@ export default function ErrorsList(props) {
 }
 
 ErrorsList.propTypes = {
-  errors: PropTypes.arrayOf(PropTypes.object).isRequired,
+  errors: PropTypes.arrayOf({
+    line: PropTypes.string.isRequired,
+    lineNumber: PropTypes.number.isRequired,
+  }).isRequired,
 };

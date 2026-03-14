@@ -1,32 +1,26 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faInfoCircle } from '@fortawesome/free-solid-svg-icons';
-import {
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { Dropdown } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
 
-import { getRepoUrl } from '../../helpers/location';
+import { updateRepoParams } from '../../helpers/location';
 
 const GROUP_ORDER = [
   'development',
   'release-stabilization',
+  'enterprise-firefox',
   'project repositories',
   'comm-repositories',
-  'qa automation tests',
   'ci',
   'servo',
   'mobile',
-  'kaios',
   'other',
 ];
 
 const DEV_GROUP_ORDER = {
   'mozilla-central': 1,
-  'mozilla-inbound': 2,
   autoland: 3,
   try: 4,
 };
@@ -34,7 +28,7 @@ const DEV_GROUP_ORDER = {
 export default function ReposMenu(props) {
   const { repos } = props;
   const groups = repos.reduce(
-    (acc, repo, idx, arr, group = (repo) => repo.repository_group.name) => ({
+    (acc, repo, _idx, _arr, group = (repo) => repo.repository_group.name) => ({
       ...acc,
       [group(repo)]: [...(acc[group(repo)] || []), repo],
     }),
@@ -50,25 +44,26 @@ export default function ReposMenu(props) {
   }));
 
   return (
-    <UncontrolledDropdown>
-      <DropdownToggle
+    <Dropdown
+      aria-controls="repo-dropdown"
+      aria-expanded="false"
+      aria-haspopup="menu"
+    >
+      <Dropdown.Toggle
         id="repoLabel"
         className="btn-view-nav nav-menu-btn"
-        caret
         title="Watch a repo"
       >
         Repos
-      </DropdownToggle>
-      <DropdownMenu right id="repo-dropdown">
+      </Dropdown.Toggle>
+      <Dropdown.Menu align="end" id="repo-dropdown">
         <ul
           className="checkbox-dropdown-menu row"
-          role="menu"
           aria-labelledby="repoLabel"
-          aria-haspopup="true"
-          aria-expanded="false"
         >
           {groupedRepos.map((group) => (
-            <DropdownItem
+            <Dropdown.Item
+              as="div"
               className="repogroup dropdown-item col"
               key={group.name}
             >
@@ -83,23 +78,22 @@ export default function ReposMenu(props) {
               {!!group.repos &&
                 group.repos.map((repo) => (
                   <li key={repo.name}>
-                    <a
-                      title="Open repo"
+                    <Link
                       className="dropdown-link"
-                      href={getRepoUrl(repo.name)}
+                      to={{ search: updateRepoParams(repo.name) }}
                     >
                       {repo.name}
-                    </a>
+                    </Link>
                   </li>
                 ))}
-            </DropdownItem>
+            </Dropdown.Item>
           ))}
         </ul>
-      </DropdownMenu>
-    </UncontrolledDropdown>
+      </Dropdown.Menu>
+    </Dropdown>
   );
 }
 
 ReposMenu.propTypes = {
-  repos: PropTypes.arrayOf(PropTypes.object).isRequired,
+  repos: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
 };

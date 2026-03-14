@@ -36,7 +36,7 @@ export const getSeriesName = function getSeriesName(
   const platform = signatureProps.machine_platform;
   let name = getTestName(signatureProps);
 
-  if (displayOptions && displayOptions.includePlatformInName) {
+  if (displayOptions?.includePlatformInName) {
     name = `${name} ${platform}`;
   }
   const options = getSeriesOptions(signatureProps, optionCollectionMap);
@@ -73,6 +73,7 @@ export const getSeriesSummary = function getSeriesSummary(
     lowerIsBetter:
       signatureProps.lower_is_better === undefined ||
       signatureProps.lower_is_better,
+    should_alert: signatureProps.should_alert,
   };
 };
 
@@ -82,8 +83,8 @@ export default class PerfSeriesModel {
   }
 
   static async getSeriesList(projectName, params) {
-    if (!this.optionCollectionMap) {
-      this.optionCollectionMap = await OptionCollectionModel.getMap();
+    if (!PerfSeriesModel.optionCollectionMap) {
+      PerfSeriesModel.optionCollectionMap = await OptionCollectionModel.getMap();
     }
 
     // we use stringify here because for certain params like 'id'
@@ -105,10 +106,42 @@ export default class PerfSeriesModel {
         projectName,
         signatureId,
         signatureProps,
-        this.optionCollectionMap,
+        PerfSeriesModel.optionCollectionMap,
       ),
     );
     return { data, failureStatus: null };
+  }
+
+  static async getJobData(projectName, params) {
+    const url = `${getProjectUrl(
+      '/performance/job-data/',
+      projectName,
+    )}?${queryString.stringify(params)}`;
+    const response = await getData(url);
+
+    if (
+      !response ||
+      response.failureStatus ||
+      !response.data ||
+      !Array.isArray(response?.data?.data) ||
+      response.data.data.length === 0
+    ) {
+      return { failureStatus: true, data: ['No data for this job'] };
+    }
+    const { data } = response;
+
+    if (!PerfSeriesModel.optionCollectionMap) {
+      PerfSeriesModel.optionCollectionMap = await OptionCollectionModel.getMap();
+    }
+    for (const item of data.data) {
+      item.signature_data = getSeriesSummary(
+        projectName,
+        item.signature_data.id,
+        item.signature_data,
+        PerfSeriesModel.optionCollectionMap,
+      );
+    }
+    return { failureStatus: false, data };
   }
 
   static getPlatformList(projectName, params) {

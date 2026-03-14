@@ -1,16 +1,16 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Button, Input, InputGroup } from 'reactstrap';
+import { Button, Form, InputGroup } from 'react-bootstrap';
 
 export default class Assignee extends React.Component {
   constructor(props) {
     super(props);
-    const { assigneeUsername } = props;
+    const { assigneeUsername = null } = props;
 
     this.state = {
       assigneeUsername,
       inEditMode: false,
-      newAssigneeUsername: null,
+      newAssigneeUsername: '',
     };
   }
 
@@ -33,7 +33,9 @@ export default class Assignee extends React.Component {
         inEditMode: true,
         // input prefills with this field, so
         // we must have it prepared
-        newAssigneeUsername: assigneeUsername,
+        newAssigneeUsername: assigneeUsername
+          ? assigneeUsername.split('/')[1]
+          : '',
       });
     }
   };
@@ -44,9 +46,12 @@ export default class Assignee extends React.Component {
 
   pressedEnter = async (event) => {
     if (event.key === 'Enter') {
+      event.preventDefault();
       const { updateAssignee } = this.props;
-      const newAssigneeUsername = event.target.value;
-
+      const newAssigneeUsername =
+        event.target.value !== ''
+          ? `mozilla-ldap/${event.target.value}`
+          : event.target.value;
       const { failureStatus } = await updateAssignee(newAssigneeUsername);
 
       if (!failureStatus) {
@@ -62,7 +67,7 @@ export default class Assignee extends React.Component {
     const { user } = this.props;
 
     this.setState({
-      newAssigneeUsername: user.username,
+      newAssigneeUsername: user.username.split('/')[1],
       inEditMode: true,
     });
   };
@@ -97,10 +102,9 @@ export default class Assignee extends React.Component {
     );
 
     return !inEditMode ? (
-      <React.Fragment>
+      <div className="d-flex gap-2">
         <Button
-          className="ml-1"
-          color="darker-secondary"
+          variant="darker-secondary"
           size="xs"
           onClick={this.goToEditMode}
           title="Click to change assignee"
@@ -109,8 +113,7 @@ export default class Assignee extends React.Component {
         </Button>
         {!assigneeUsername && (
           <Button
-            className="ml-1"
-            color="darker-secondary"
+            variant="outline-darker-secondary"
             size="xs"
             disabled={!user.isStaff}
             onClick={this.prefillWithLoggedInUsername}
@@ -118,10 +121,10 @@ export default class Assignee extends React.Component {
             Take
           </Button>
         )}
-      </React.Fragment>
+      </div>
     ) : (
       <InputGroup size="sm">
-        <Input
+        <Form.Control
           disabled={!user.isStaff}
           placeholder={placeholder}
           value={newAssigneeUsername}
@@ -139,8 +142,4 @@ Assignee.propTypes = {
   updateAssignee: PropTypes.func.isRequired,
   user: PropTypes.shape({}).isRequired,
   assigneeUsername: PropTypes.string,
-};
-
-Assignee.defaultProps = {
-  assigneeUsername: null,
 };

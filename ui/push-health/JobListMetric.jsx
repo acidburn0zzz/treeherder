@@ -1,27 +1,57 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Row } from 'reactstrap';
 
-import Job from './Job';
-import { filterJobs } from './helpers';
+import PlatformConfig from './PlatformConfig';
 
 export default class JobListMetric extends React.PureComponent {
   render() {
-    const { data, repo, revision, showParentMatches } = this.props;
-    const { name, details } = data;
-    const jobs = filterJobs(details, showParentMatches);
-    const msgForZeroJobs =
-      details.length && !jobs.length
-        ? `All failed ${name} also failed in Parent Push`
-        : `All ${name} passed`;
+    const {
+      data,
+      currentRepo,
+      revision,
+      notify,
+      selectedJobName,
+      selectedTaskId,
+      updateParamsAndState,
+    } = this.props;
+    const { name, result, details } = data;
+    const jobNames = {};
+
+    let msgForZeroJobs = `All ${name} passed`;
+    const correctGrammer = name.slice(-1) === 's' ? 'are' : 'is';
+
+    if (result === 'unknown') {
+      msgForZeroJobs = `${name} ${correctGrammer} in progress. No failures detected.`;
+    }
+
+    details.forEach((job) => {
+      if (!jobNames[job.job_type_name]) {
+        jobNames[job.job_type_name] = [job];
+      } else {
+        jobNames[job.job_type_name].push(job);
+      }
+    });
+    const jobsList = Object.entries(jobNames);
 
     return (
       <div>
-        {jobs.length ? (
-          jobs.map((job) => (
-            <Row key={job.id} className="mt-2">
-              <Job job={job} repo={repo} revision={revision} />
-            </Row>
+        {jobsList.length > 0 ? (
+          jobsList.map(([jobName, jobs]) => (
+            <PlatformConfig
+              key={jobName}
+              jobName={jobName}
+              currentRepo={currentRepo}
+              revision={revision}
+              notify={notify}
+              selectedJobName={selectedJobName}
+              selectedTaskId={selectedTaskId}
+              updateParamsAndState={updateParamsAndState}
+              jobs={jobs}
+            >
+              <span className="px-2 text-darker-secondary font-weight-500">
+                {jobName}
+              </span>
+            </PlatformConfig>
           ))
         ) : (
           <div>{msgForZeroJobs}</div>
@@ -35,9 +65,8 @@ JobListMetric.propTypes = {
   data: PropTypes.shape({
     name: PropTypes.string.isRequired,
     result: PropTypes.string.isRequired,
-    details: PropTypes.array.isRequired,
+    details: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   }).isRequired,
-  repo: PropTypes.string.isRequired,
-  revision: PropTypes.string.isRequired,
-  showParentMatches: PropTypes.bool.isRequired,
+  currentRepo: PropTypes.shape({}).isRequired,
+  updateParamsAndState: PropTypes.func.isRequired,
 };

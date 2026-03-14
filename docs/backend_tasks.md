@@ -2,13 +2,11 @@
 
 ## Running the tests
 
-You can run flake8 and the pytest suite inside Docker, using:
+You can run the linter and the pytest suite inside Docker, using:
 
 ```bash
 docker-compose run backend ./runtests.sh
 ```
-
-Note: The Selenium tests will be skipped unless `yarn build` has been manually run prior.
 
 Or for more control, run each tool individually, by first running:
 
@@ -18,9 +16,8 @@ docker-compose run backend bash
 
 ...which saves having to wait for docker-compose to spin up for every test run.
 
-NOTE: To run Selenium tests you need to run `yarn build` for the tests not to skip.
-`yarn build` will generate a `.build` directory which will be seen within the `backend` container.
-If you don't have `yarn` working on your host you can run this instead `docker-compose run frontend sh -c "yarn && yarn build"`
+`pnpm build` will generate a `.build` directory which will be seen within the `backend` container.
+If you don't have `pnpm` working on your host you can run this instead `docker-compose run frontend sh -c "corepack enable && pnpm install && pnpm build"`
 
 Then run the individual tools within that shell, like so:
 
@@ -30,7 +27,6 @@ Then run the individual tools within that shell, like so:
   pytest tests/
   pytest tests/log_parser/test_tasks.py
   pytest tests/etl/test_job_loader.py -k test_ingest_pulse_jobs
-  pytest tests/selenium/test_pin_jobs.py::test_pin_all_jobs
   ```
 
   To run all tests, including slow tests that are normally skipped, use:
@@ -41,17 +37,10 @@ Then run the individual tools within that shell, like so:
 
   For more options, see `pytest --help` or <https://docs.pytest.org/en/stable/usage.html>.
 
-  To assist with debugging Selenium test failures, an HTML reporting containing screenshots
-  can be generated using:
+- [Ruff](https://docs.astral.sh/ruff/):
 
   ```bash
-  pytest tests/selenium/ --html report.html
-  ```
-
-- [flake8](https://flake8.readthedocs.io/):
-
-  ```bash
-  flake8
+  ruff check .
   ```
 
 ## Hide Jobs with Tiers
@@ -71,29 +60,29 @@ toolbar to your right.
 
 ## Connecting to Services Running inside Docker
 
-Treeherder uses various services to function, eg MySQL, etc.
+Treeherder uses various services to function, eg Postgres, etc.
 At times it can be useful to connect to them from outside the Docker environment.
 
 The `docker-compose.yml` file defines how internal ports are mapped to the host OS' ports.
 
-In the below example we're mapping the container's port 3306 (MySQL's default port) to host port 3306.
+In the below example we're mapping the container's port 5432 (Postgres's default port) to host port 5432.
 
 ```yaml
 # This is a line from the docker-compose.yml file
 ports:
-  - '3306:3306'
+  - '5432:5432'
 ```
 
 <!-- prettier-ignore -->
 !!! note
     Any forwarded ports will block usage of that port on the host OS even if there isn't a service running inside the VM talking to it.
 
-With MySQL exposed at port 3306 you can connect to it from your host OS with the following credentials:
+With Postgres exposed at port 5432 you can connect to it from your host OS with the following credentials:
 
 - host: `localhost`
-- port: `3306`
-- user: `root`
-- password: leave blank
+- port: `5432`
+- user: `postgres`
+- password: `mozilla1234`
 
 Other services running inside the Compose project, can be accessed in the same way.
 
@@ -121,18 +110,3 @@ Other services running inside the Compose project, can be accessed in the same w
 [client git log]: https://github.com/mozilla/treeherder/commits/master/treeherder/client
 [client.py]: https://github.com/mozilla/treeherder/blob/master/treeherder/client/thclient/client.py
 [bug 1236965]: https://bugzilla.mozilla.org/show_bug.cgi?id=1236965
-
-## Reset a disposable project
-
-Engineers can [book a repository](https://wiki.mozilla.org/ReleaseEngineering/DisposableProjectRepositories) for
-some time and might want to start using Treeherder with a clean slate. Read the following steps to remove old data.
-
-```bash
-heroku run --app treeherder-stage bash
-./manage.py shell
->>> from treeherder.model.models import Push, Repository
->>> repo_name = "pine"  # Change this to what you want
->>> repo_id = Repository.objects.filter(name=repo_name)[0].id
->>> Push.objects.filter(repository=repo_id).delete()
-(121433, {'model.Commit': 120289, 'perf.PerformanceDatum': 0, 'perf.PerformanceAlertSummary': 4, 'model.Push': 1140})
-```

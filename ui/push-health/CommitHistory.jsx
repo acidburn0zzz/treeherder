@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Button } from 'reactstrap';
+import { Alert, Button } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCaretUp, faCaretRight } from '@fortawesome/free-solid-svg-icons';
 
@@ -47,6 +47,7 @@ class CommitHistory extends React.PureComponent {
       },
       revision,
       currentRepo,
+      showParent = true,
     } = this.props;
     const { clipboardVisible, isExpanded } = this.state;
     const parentRepoModel = new RepositoryModel(parentRepository);
@@ -71,36 +72,48 @@ class CommitHistory extends React.PureComponent {
     return (
       <React.Fragment>
         <div className="push-header" data-testid="push-header">
-          <div className="push-bar">
-            <div className="h3 text-capitalize" data-testid="headerText">
+          <div>
+            <div className="commit-header" data-testid="headerText">
               {headerText}
             </div>
-            <div className="text-secondary" data-testid="authorTime">
+            <div className="text-secondary my-2" data-testid="authorTime">
               {toDateStr(pushTimestamp)}
               <span className="mx-1">-</span>
               <span>{authorEmail}</span>
             </div>
           </div>
-          <div className="text-secondary">
+          <div className="text-secondary mt-1">
             Push
-            <span className="font-weight-bold mr-1 ml-1">
+            <span className="font-weight-bold me-1 ms-1">
               <a
-                href={revisionPushFilterUrl}
+                href={currentRepo.getRevisionHref(revision)}
                 target="_blank"
                 rel="noopener noreferrer"
               >
-                {revision.substring(0, 17)}...
+                {revision}
               </a>
             </span>
             on
-            <span className="d-inline-block text-capitalize font-weight-bold ml-1">
+            <span
+              data-testid="header-repo"
+              className="d-inline-block text-capitalize font-weight-bold ms-1"
+            >
               {currentRepo.name}
             </span>
+          </div>
+          <div className="mt-2">
+            <a
+              href={revisionPushFilterUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              View in Treeherder
+            </a>
           </div>
         </div>
         <div className="commit-area mt-2 text-secondary">
           {revisions.length > 1 && (
-            <div className="ml-3">
+            <div className="ms-3">
               <Revision
                 revision={revisions[1]}
                 repo={currentRepo}
@@ -120,56 +133,57 @@ class CommitHistory extends React.PureComponent {
               commentFont="h6"
             />
           )}
-          <div className="ml-3">
-            Base commit:
-            <span>
-              {!exactMatch && (
-                <div>
-                  <Alert color="warning" className="m-3 font-italics">
-                    Warning: Could not find an exact match parent Push in
-                    Treeherder.
-                  </Alert>
-                  {id && <div>Closest match: </div>}
-                </div>
-              )}
-              <span
-                className="mb-2"
-                onMouseEnter={() => this.showClipboard(true)}
-                onMouseLeave={() => this.showClipboard(false)}
-              >
-                <a
-                  href={parentLinkUrl}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Open this push"
-                  data-testid="parent-commit-sha"
-                  className="mr-1 ml-1 font-weight-bold text-secondary"
-                >
-                  {parentPushRevision || parentSha}
-                </a>
-                {exactMatch && (
-                  <PushHealthStatus
-                    revision={parentPushRevision}
-                    repoName={parentRepository.name}
-                    jobCounts={jobCounts}
-                  />
+          {showParent && (
+            <div className="ms-3">
+              Base commit:
+              <span>
+                {!exactMatch && (
+                  <div>
+                    <Alert variant="warning" className="m-3 font-italics">
+                      Warning: Could not find an exact match parent Push in
+                      Treeherder.
+                    </Alert>
+                    {id && <div>Closest match: </div>}
+                  </div>
                 )}
-                <Clipboard
-                  description="full hash"
-                  text={parentSha}
-                  visible={clipboardVisible}
-                />
+                <span
+                  className="mb-2"
+                  onMouseEnter={() => this.showClipboard(true)}
+                  onMouseLeave={() => this.showClipboard(false)}
+                >
+                  <a
+                    href={parentLinkUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    title="View this push"
+                    data-testid="parent-commit-sha"
+                    className="me-1 ms-1 font-weight-bold text-secondary"
+                  >
+                    {parentPushRevision || parentSha}
+                  </a>
+                  {exactMatch && (
+                    <PushHealthStatus
+                      revision={parentPushRevision}
+                      repoName={parentRepository.name}
+                      jobCounts={jobCounts}
+                    />
+                  )}
+                  <Clipboard
+                    description="full hash"
+                    text={parentSha}
+                    visible={clipboardVisible}
+                  />
+                </span>
               </span>
-            </span>
-          </div>
+            </div>
+          )}
         </div>
         {revisions.length > 2 && (
           <span className="font-weight-bold">
             <Button
               onClick={this.toggleDetails}
-              outline
-              color="darker-secondary"
-              className="border-0 pl-0 shadow-none"
+              variant="outline-secondary"
+              className="border-0 ps-0 shadow-none"
               role="button"
               aria-expanded={isExpanded}
             >
@@ -179,7 +193,7 @@ class CommitHistory extends React.PureComponent {
                 aria-label={expandTitle}
                 alt=""
               />
-              <span className="ml-1 font-weight-bold">{expandText}</span>
+              <span className="ms-1 font-weight-bold">{expandText}</span>
             </Button>
           </span>
         )}
@@ -190,7 +204,7 @@ class CommitHistory extends React.PureComponent {
 
 CommitHistory.propTypes = {
   history: PropTypes.shape({
-    parentRepository: PropTypes.object.isRequired,
+    parentRepository: PropTypes.shape({}),
     revisionCount: PropTypes.number.isRequired,
     parentPushRevision: PropTypes.string,
     job_counts: PropTypes.shape({
@@ -202,6 +216,7 @@ CommitHistory.propTypes = {
   }).isRequired,
   revision: PropTypes.string.isRequired,
   currentRepo: PropTypes.shape({}).isRequired,
+  showParent: PropTypes.bool,
 };
 
 export default CommitHistory;

@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { render, waitFor } from '@testing-library/react';
 
 import RepositoryModel from '../../../ui/models/repository';
@@ -14,15 +14,15 @@ const repo = new RepositoryModel({
     name: 'development',
     description: '',
   },
-  name: 'mozilla-inbound',
+  name: 'autoland',
   dvcs_type: 'hg',
-  url: 'https://hg.mozilla.org/integration/mozilla-inbound',
+  url: 'https://hg.mozilla.org/integration/autoland',
   branch: null,
   codebase: 'gecko',
   description: '',
   active_status: 'active',
   performance_alerts_enabled: true,
-  pushlogURL: 'https://hg.mozilla.org/integration/mozilla-inbound/pushloghtml',
+  pushlogURL: 'https://hg.mozilla.org/integration/autoland/pushloghtml',
 });
 const push = {
   id: 151371,
@@ -187,16 +187,14 @@ describe('More revisions link component', () => {
     const link = getByText('\u2026and more');
 
     expect(link).toBeInTheDocument();
-    expect(link.getAttribute('href')).toEqual('http://more.link/');
+    expect(link.getAttribute('href')).toBe('http://more.link/');
   });
 
   test('has an external link icon', () => {
     render(<MoreRevisionsLink href="http://more.link" />);
 
     expect(
-      document.querySelectorAll(
-        'svg.svg-inline--fa.fa-external-link-square-alt',
-      ),
+      document.querySelectorAll('svg.svg-inline--fa.fa-square-up-right'),
     ).toHaveLength(1);
   });
 });

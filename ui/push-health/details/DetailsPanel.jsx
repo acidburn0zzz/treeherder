@@ -3,7 +3,7 @@ import PropTypes from 'prop-types';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimes } from '@fortawesome/free-solid-svg-icons';
 import { Tab, TabList, TabPanel, Tabs } from 'react-tabs';
-import { Col, Row, Button, Spinner } from 'reactstrap';
+import { Col, Button, Spinner } from 'react-bootstrap';
 
 import { getArtifactsUrl, getLogViewerUrl } from '../../helpers/url';
 import { formatArtifacts } from '../../helpers/display';
@@ -12,6 +12,7 @@ import { getData } from '../../helpers/http';
 import JobModel from '../../models/job';
 import LogviewerTab from '../../shared/tabs/LogviewerTab';
 import FailureSummaryTab from '../../shared/tabs/failureSummary/FailureSummaryTab';
+import JobArtifacts from '../../shared/JobArtifacts';
 
 class DetailsPanel extends React.Component {
   constructor(props) {
@@ -29,7 +30,7 @@ class DetailsPanel extends React.Component {
   }
 
   componentDidMount() {
-    const { selectedTask } = this.props;
+    const { selectedTask = null } = this.props;
 
     if (selectedTask) {
       this.selectTask(selectedTask);
@@ -37,7 +38,7 @@ class DetailsPanel extends React.Component {
   }
 
   componentDidUpdate(prevProps) {
-    const { selectedTask } = this.props;
+    const { selectedTask = null } = this.props;
 
     if (selectedTask && prevProps.selectedTask) {
       const {
@@ -74,8 +75,7 @@ class DetailsPanel extends React.Component {
   };
 
   selectTask = async () => {
-    const { currentRepo, selectedTask } = this.props;
-
+    const { currentRepo, selectedTask = null } = this.props;
     this.setState({ taskDetails: [], taskDetailLoading: true }, () => {
       if (this.selectTaskController !== null) {
         // Cancel the in-progress fetch requests.
@@ -159,33 +159,33 @@ class DetailsPanel extends React.Component {
       <div className="w-100">
         {taskDetailLoading && <Spinner />}
         {!!selectedTaskFull && !taskDetailLoading && (
-          <div role="region" aria-label="Task" className="d-flex ml-5">
+          <div role="region" aria-label="Task" className="d-flex ms-5">
             <Tabs
               selectedIndex={tabIndex}
               onSelect={this.setTabIndex}
-              className="w-100 h-100 ml-1 mr-5 mb-2 border p-3 bg-white"
+              className="w-100 h-100 ms-1 me-5 mb-2 border p-3 bg-white"
               selectedTabClassName="selected-detail-tab"
             >
-              <TabList className="pl-0 w-100 list-inline">
+              <TabList className="ps-0 w-100 list-inline">
                 <span className="d-flex justify-content-between w-100">
                   <span>
-                    <Tab className="font-weight-bold text-secondary list-inline-item pointable">
+                    <Tab className="font-weight-bold text-secondary list-inline-item">
                       Failure Summary
                     </Tab>
-                    <Tab className="ml-3 font-weight-bold text-secondary list-inline-item pointable">
+                    <Tab className="ms-3 font-weight-bold text-secondary list-inline-item pointable">
                       Log Viewer
                     </Tab>
-                    <Tab className="ml-3 font-weight-bold text-secondary list-inline-item pointable">
-                      Artifacts
+                    <Tab className="ms-3 font-weight-bold text-secondary list-inline-item pointable">
+                      Artifacts and Debugging Tools
                     </Tab>
                   </span>
                   <Button
                     onClick={closeDetails}
-                    outline
+                    variant="outline"
                     className="border-0"
                     title="Close details view of this task"
                   >
-                    <FontAwesomeIcon icon={faTimes} className="mr-1" />
+                    <FontAwesomeIcon icon={faTimes} className="me-1" />
                   </Button>
                 </span>
               </TabList>
@@ -193,13 +193,14 @@ class DetailsPanel extends React.Component {
                 <TabPanel>
                   <FailureSummaryTab
                     selectedJob={selectedTaskFull}
+                    selectedJobId={selectedTaskFull.id}
                     jobLogUrls={selectedTaskFull.logs}
                     logParseStatus="unknown"
                     logViewerFullUrl={getLogViewerUrl(
                       selectedTaskFull.id,
                       currentRepo.name,
                     )}
-                    repoName={currentRepo.name}
+                    currentRepo={currentRepo}
                     developerMode
                   />
                 </TabPanel>
@@ -210,14 +211,12 @@ class DetailsPanel extends React.Component {
                   />
                 </TabPanel>
                 <TabPanel className="overflow-auto h-100">
-                  <Col className="ml-2">
-                    {taskDetails.map((artifact) => (
-                      <Row key={artifact.value} data-testid="task-artifact">
-                        <a href={artifact.url} className="link-style">
-                          {artifact.value}
-                        </a>
-                      </Row>
-                    ))}
+                  <Col className="ms-2">
+                    <JobArtifacts
+                      jobDetails={taskDetails}
+                      repoName={currentRepo.name}
+                      selectedJob={selectedTaskFull}
+                    />
                   </Col>
                 </TabPanel>
               </div>
@@ -233,10 +232,6 @@ DetailsPanel.propTypes = {
   currentRepo: PropTypes.shape({}).isRequired,
   closeDetails: PropTypes.func.isRequired,
   selectedTask: PropTypes.shape({}),
-};
-
-DetailsPanel.defaultProps = {
-  selectedTask: null,
 };
 
 export default DetailsPanel;

@@ -4,10 +4,10 @@ import uuid
 import pytest
 import responses
 import slugid
+from django.core.exceptions import ObjectDoesNotExist
 
-from treeherder.etl.exceptions import MissingPushException
 from treeherder.etl.job_loader import JobLoader
-from treeherder.etl.taskcluster_pulse.handler import handleMessage
+from treeherder.etl.taskcluster_pulse.handler import handle_message
 from treeherder.model.models import Job, JobLog, TaskclusterMetadata
 
 
@@ -36,14 +36,16 @@ def transformed_pulse_jobs(sample_data, test_repository):
     return jobs
 
 
-def mock_artifact(taskId, runId, artifactName):
+def mock_artifact(task_id, run_id, artifact_name):
     # Mock artifact with empty body
-    baseUrl = "https://queue.taskcluster.net/v1/task/{taskId}/runs/{runId}/artifacts/{artifactName}"
+    base_url = (
+        "https://taskcluster.net/api/queue/v1/task/{taskId}/runs/{runId}/artifacts/{artifactName}"
+    )
     responses.add(
         responses.GET,
-        baseUrl.format(taskId=taskId, runId=runId, artifactName=artifactName),
+        base_url.format(taskId=task_id, runId=run_id, artifactName=artifact_name),
         body="",
-        content_type='text/plain',
+        content_type="text/plain",
         status=200,
     )
 
@@ -51,20 +53,20 @@ def mock_artifact(taskId, runId, artifactName):
 @pytest.fixture
 async def new_pulse_jobs(sample_data, test_repository, push_stored):
     revision = push_stored[0]["revisions"][0]["revision"]
-    pulseMessages = copy.deepcopy(sample_data.taskcluster_pulse_messages)
+    pulse_messages = copy.deepcopy(sample_data.taskcluster_pulse_messages)
     tasks = copy.deepcopy(sample_data.taskcluster_tasks)
     jobs = []
     # Over here we transform the Pulse messages into the intermediary taskcluster-treeherder
     # generated messages
-    for message in list(pulseMessages.values()):
-        taskId = message["payload"]["status"]["taskId"]
-        task = tasks[taskId]
+    for message in list(pulse_messages.values()):
+        task_id = message["payload"]["status"]["taskId"]
+        task = tasks[task_id]
 
-        # If we pass task to handleMessage we won't hit the network
-        taskRuns = await handleMessage(message, task)
-        # handleMessage returns [] when it is a task that is not meant for Treeherder
-        for run in reversed(taskRuns):
-            mock_artifact(taskId, run["retryId"], "public/logs/live_backing.log")
+        # If we pass task to handle_message we won't hit the network
+        task_runs = await handle_message(message, task)
+        # handle_message returns [] when it is a task that is not meant for Treeherder
+        for run in reversed(task_runs):
+            mock_artifact(task_id, run["retryId"], "public/logs/live_backing.log")
             run["origin"]["project"] = test_repository.name
             run["origin"]["revision"] = revision
             jobs.append(run)
@@ -89,6 +91,27 @@ def test_job_transformation(pulse_jobs, transformed_pulse_jobs):
         assert transformed_pulse_jobs[idx] == json.loads(json.dumps(jl.transform(pulse_job)))
 
 
+def test_job_transformation_extracts_perfherder_data(pulse_jobs):
+    jl = JobLoader()
+    pulse_job = pulse_jobs[0]
+    links = pulse_job.setdefault("jobInfo", {}).setdefault("links", [])
+    links.append(
+        {
+            "label": "artifact uploaded",
+            "linkText": "perfherder-data-decision.json",
+            "url": "https://example.mozilla.com/perfherder-data-decision.json",
+        }
+    )
+    transformed_job = jl.transform(pulse_job)
+    assert transformed_job["job"]["perfherder_data_references"] == [
+        {
+            "name": "perfherder-data-decision.json",
+            "url": "https://example.mozilla.com/perfherder-data-decision.json",
+            "parse_status": "pending",
+        }
+    ]
+
+
 @responses.activate
 def test_new_job_transformation(new_pulse_jobs, new_transformed_jobs, failure_classifications):
     jl = JobLoader()
@@ -97,11 +120,11 @@ def test_new_job_transformation(new_pulse_jobs, new_transformed_jobs, failure_cl
         job_guid = message["taskId"]
         (decoded_task_id, _) = job_guid.split("/")
         # As of slugid v2, slugid.encode() returns a string not bytestring under Python 3.
-        taskId = slugid.encode(uuid.UUID(decoded_task_id))
-        transformed_job = jl.process_job(message, 'https://firefox-ci-tc.services.mozilla.com')
+        task_id = slugid.encode(uuid.UUID(decoded_task_id))
+        transformed_job = jl.process_job(message, "https://firefox-ci-tc.services.mozilla.com")
         # Not all messages from Taskcluster will be processed
         if transformed_job:
-            assert new_transformed_jobs[taskId] == transformed_job
+            assert new_transformed_jobs[task_id] == transformed_job
 
 
 def test_ingest_pulse_jobs(
@@ -115,38 +138,81 @@ def test_ingest_pulse_jobs(
     revision = push_stored[0]["revision"]
     for job in pulse_jobs:
         job["origin"]["revision"] = revision
-        jl.process_job(job, 'https://firefox-ci-tc.services.mozilla.com')
+        jl.process_job(job, "https://firefox-ci-tc.services.mozilla.com")
 
     jobs = Job.objects.all()
-    assert len(jobs) == 5
+    assert len(jobs) == 30
 
     assert [job.taskcluster_metadata for job in jobs]
-    assert set(TaskclusterMetadata.objects.values_list('task_id', flat=True)) == set(
+    assert set(TaskclusterMetadata.objects.values_list("task_id", flat=True)) == set(
         [
-            'IYyscnNMTLuxzna7PNqUJQ',
-            'XJCbbRQ6Sp-UL1lL-tw5ng',
-            'ZsSzJQu3Q7q2MfehIBAzKQ',
-            'bIzVZt9jQQKgvQYD3a2HQw',
+            "AI3Nrr3gSDSpZ9E9aBA3rg",
+            "BAG7ifS1QbGCDwiOP7NklQ",
+            "CaK6NlfBSf6F-NAVrrKJDQ",
+            "CilZCnmiTKmagJe_h6Hq5A",
+            "FNT3BLiQRHO14NNgonjQQg",
+            "FcbIUoVbS4utxFES84wrPw",
+            "FclD6gA-TTGgvq_r9-LSDg",
+            "GPLk78m6Sz6TTLJFVca4Xw",
+            "GcvHP6HLSeO_rKYDN2y_Tg",
+            "I-Hg7bM4TUOq4JqnX0pt0g",
+            "I2Y-TBNcQPSJzsKlB95rfQ",
+            "M1ECjPJBTlmwJxZq5pWyvg",
+            "MKq8mMM-RIOxztXO5ng-_A",
+            "MrrbifzBQJefUbS2ym4Qag",
+            "ORYYNMhET0yxGMvel4Jujg",
+            "TqWDDGoWSbCH93RTTxPAWg",
+            "V8rtIDroRV-G9bzjJglS0A",
+            "VVa2amzMS-2cSDbig9RHsw",
+            "YIOK401yR2GvygIFcfPVBg",
+            "b_QCzMjVQmKPyO5Il0Jedw",
+            "bljbLRFdT4KGCWJ2_C6RsQ",
+            "c2dxYucCSMWPlTkb70r89g",
+            "cPe8y071Spat09dlAzCGug",
+            "cZ7gc9JYQa2UPEC_EIxIug",
+            "dB8R5AXORZeCpDfQlYUlow",
+            "e1YPllz6TMawISpugkRx1g",
+            "eJ9PG41tSaWzNU1uY7-uSQ",
+            "edzgzCphTAS-QN_TAnf7eA",
+            "ekQaeC_yR0K8jPKx28E7EA",
+            "ftXsRyOwRgeiiYHyITXUOA",
         ]
     )
 
     job_logs = JobLog.objects.filter(job_id=1)
-    assert job_logs.count() == 2
+    assert job_logs.count() == 1
     logs_expected = [
         {
-            "name": "errorsummary_json",
-            "url": "http://mozilla-releng-blobs.s3.amazonaws.com/blobs/Mozilla-Inbound-Non-PGO/sha512/05c7f57df6583c6351c6b49e439e2678e0f43c2e5b66695ea7d096a7519e1805f441448b5ffd4cc3b80b8b2c74b244288fda644f55ed0e226ef4e25ba02ca466",
-            "parse_status": 0,
-        },
-        {
             "name": "live_backing_log",
-            "url": "http://ftp.mozilla.org/pub/mozilla.org/spidermonkey/tinderbox-builds/mozilla-inbound-linux64/mozilla-inbound_linux64_spidermonkey-warnaserr-bm57-build1-build352.txt.gz",
+            "url": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/AI3Nrr3gSDSpZ9E9aBA3rg/runs/0/artifacts/public/logs/live_backing.log",
             "parse_status": 0,
         },
     ]
     assert [
-        {"name": item.name, "url": item.url, "parse_status": item.status} for item in job_logs.all()
+        {"name": item.name, "url": item.url, "parse_status": item.status}
+        for item in job_logs.all().order_by("name")
     ] == logs_expected
+
+
+def test_ingest_pulse_job_with_perfherder_data(
+    pulse_jobs, push_stored, failure_classifications, mock_log_parser
+):
+    jl = JobLoader()
+    pulse_job = copy.deepcopy(pulse_jobs[0])
+    pulse_job["origin"]["revision"] = push_stored[0]["revision"]
+    pulse_job["jobInfo"]["links"] = [
+        {
+            "label": "artifact uploaded",
+            "linkText": "perfherder-data-decision.json",
+            "url": "https://example.mozilla.com/perfherder-data-decision.json",
+        }
+    ]
+
+    jl.process_job(pulse_job, "https://firefox-ci-tc.services.mozilla.com")
+
+    names = list(JobLog.objects.filter(job_id=1).values_list("name", flat=True))
+    assert "live_backing_log" in names
+    assert any(n.startswith("perfherder-data") for n in names)
 
 
 def test_ingest_pulse_job_with_long_job_type_name(
@@ -158,11 +224,11 @@ def test_ingest_pulse_job_with_long_job_type_name(
     job = pulse_jobs[0]
     jl = JobLoader()
     revision = push_stored[0]["revision"]
-    job["display"][
-        "jobName"
-    ] = "this is a very long string that exceeds the 100 character size that was the previous limit by just a little bit"
+    job["display"]["jobName"] = (
+        "this is a very long string that exceeds the 100 character size that was the previous limit by just a little bit"
+    )
     job["origin"]["revision"] = revision
-    jl.process_job(job, 'https://firefox-ci-tc.services.mozilla.com')
+    jl.process_job(job, "https://firefox-ci-tc.services.mozilla.com")
 
     jobs = Job.objects.all()
     assert len(jobs) == 1
@@ -181,17 +247,17 @@ def test_ingest_pending_pulse_job(
     revision = push_stored[0]["revision"]
     pulse_job["origin"]["revision"] = revision
     pulse_job["state"] = "pending"
-    jl.process_job(pulse_job, 'https://firefox-ci-tc.services.mozilla.com')
+    jl.process_job(pulse_job, "https://firefox-ci-tc.services.mozilla.com")
 
     jobs = Job.objects.all()
     assert len(jobs) == 1
 
     job = jobs[0]
     assert job.taskcluster_metadata
-    assert job.taskcluster_metadata.task_id == 'IYyscnNMTLuxzna7PNqUJQ'
+    assert job.taskcluster_metadata.task_id == "AI3Nrr3gSDSpZ9E9aBA3rg"
 
     # should not have processed any log or details for pending jobs
-    assert JobLog.objects.count() == 2
+    assert JobLog.objects.count() == 1
 
 
 def test_ingest_pulse_jobs_bad_project(
@@ -208,10 +274,10 @@ def test_ingest_pulse_jobs_bad_project(
     job["origin"]["project"] = "ferd"
 
     for pulse_job in pulse_jobs:
-        jl.process_job(pulse_job, 'https://firefox-ci-tc.services.mozilla.com')
+        jl.process_job(pulse_job, "https://firefox-ci-tc.services.mozilla.com")
 
     # length of pulse jobs is 5, so one will be skipped due to bad project
-    assert Job.objects.count() == 4
+    assert Job.objects.count() == 29
 
 
 @responses.activate
@@ -225,15 +291,15 @@ def test_ingest_pulse_jobs_with_missing_push(pulse_jobs):
     job["origin"]["revision"] = "1234567890123456789012345678901234567890"
     responses.add(
         responses.GET,
-        "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/IYyscnNMTLuxzna7PNqUJQ",
+        "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/AI3Nrr3gSDSpZ9E9aBA3rg",
         json={},
-        content_type='application/json',
+        content_type="application/json",
         status=200,
     )
 
-    with pytest.raises(MissingPushException):
+    with pytest.raises(ObjectDoesNotExist):
         for pulse_job in pulse_jobs:
-            jl.process_job(pulse_job, 'https://firefox-ci-tc.services.mozilla.com')
+            jl.process_job(pulse_job, "https://firefox-ci-tc.services.mozilla.com")
 
     # if one job isn't ready, except on the whole batch.  They'll retry as a
     # task after the timeout.
@@ -294,12 +360,33 @@ def test_transition_pending_retry_fail_stays_retry(
     change_state_result(first_job, jl, "completed", "fail", "completed", "retry")
 
 
-def test_skip_unscheduled(first_job, failure_classifications, mock_log_parser):
+def test_transition_unscheduled_pending_running_complete(
+    first_job, failure_classifications, mock_log_parser
+):
     jl = JobLoader()
-    first_job["state"] = "unscheduled"
-    jl.process_job(first_job, 'https://firefox-ci-tc.services.mozilla.com')
 
-    assert not Job.objects.count()
+    change_state_result(first_job, jl, "unscheduled", "unknown", "unscheduled", "unknown")
+    change_state_result(first_job, jl, "pending", "unknown", "pending", "unknown")
+    change_state_result(first_job, jl, "running", "unknown", "running", "unknown")
+    change_state_result(first_job, jl, "completed", "success", "completed", "success")
+
+
+def test_transition_pending_unscheduled_stays_pending(
+    first_job, failure_classifications, mock_log_parser
+):
+    jl = JobLoader()
+
+    change_state_result(first_job, jl, "pending", "unknown", "pending", "unknown")
+    change_state_result(first_job, jl, "unscheduled", "unknown", "pending", "unknown")
+
+
+def test_transition_running_unscheduled_stays_running(
+    first_job, failure_classifications, mock_log_parser
+):
+    jl = JobLoader()
+
+    change_state_result(first_job, jl, "running", "unknown", "running", "unknown")
+    change_state_result(first_job, jl, "unscheduled", "unknown", "running", "unknown")
 
 
 def change_state_result(test_job, job_loader, new_state, new_result, exp_state, exp_result):
@@ -307,10 +394,11 @@ def change_state_result(test_job, job_loader, new_state, new_result, exp_state, 
     job = copy.deepcopy(test_job)
     job["state"] = new_state
     job["result"] = new_result
-    if new_state == 'pending':
-        # pending jobs wouldn't have logs and our store_job_data doesn't
+    if new_state in ("pending", "unscheduled"):
+        # pending/unscheduled jobs wouldn't have logs and our store_job_data doesn't
         # support it.
-        del job['logs']
+        if "logs" in job:
+            del job["logs"]
         errorsummary_indices = [
             i
             for i, item in enumerate(job["jobInfo"].get("links", []))
@@ -319,7 +407,7 @@ def change_state_result(test_job, job_loader, new_state, new_result, exp_state, 
         for index in errorsummary_indices:
             del job["jobInfo"]["links"][index]
 
-    job_loader.process_job(job, 'https://firefox-ci-tc.services.mozilla.com')
+    job_loader.process_job(job, "https://firefox-ci-tc.services.mozilla.com")
 
     assert Job.objects.count() == 1
     job = Job.objects.get(id=1)

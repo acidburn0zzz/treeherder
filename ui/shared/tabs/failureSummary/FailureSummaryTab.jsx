@@ -1,20 +1,19 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { Button } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSpinner } from '@fortawesome/free-solid-svg-icons';
 
-import { thBugSuggestionLimit, thEvents } from '../../../helpers/constants';
-import { getResultState, isReftest } from '../../../helpers/job';
 import {
-  getBugUrl,
-  getLogViewerUrl,
-  getReftestUrl,
-  textLogErrorsEndpoint,
-} from '../../../helpers/url';
+  thBugSuggestionLimit,
+  thEvents,
+  requiredInternalOccurrences,
+} from '../../../helpers/constants';
+import { getResultState, isReftest } from '../../../helpers/job';
+import { getReftestUrl } from '../../../helpers/url';
 import BugFiler from '../../BugFiler';
+import InternalIssueFiler from '../../InternalIssueFiler';
 import BugSuggestionsModel from '../../../models/bugSuggestions';
-import { getData } from '../../../helpers/http';
-import { getProjectJobUrl } from '../../../helpers/location';
 
 import ErrorsList from './ErrorsList';
 import ListItem from './ListItem';
@@ -26,6 +25,7 @@ class FailureSummaryTab extends React.Component {
 
     this.state = {
       isBugFilerOpen: false,
+      isInternalIssueFilerOpen: false,
       suggestions: [],
       errors: [],
       bugSuggestionsLoading: false,
@@ -34,15 +34,19 @@ class FailureSummaryTab extends React.Component {
 
   componentDidMount() {
     this.loadBugSuggestions();
+
+    window.addEventListener(thEvents.internalIssueClassification, (event) =>
+      this.checkInternalFailureOccurrences(event.detail.internalBugId),
+    );
   }
 
   componentDidUpdate(prevProps) {
-    const { selectedJob } = this.props;
+    const { selectedJobId } = this.props;
 
     if (
-      !!selectedJob &&
+      !!selectedJobId &&
       !!prevProps.selectedJob &&
-      selectedJob.id !== prevProps.selectedJob.id
+      selectedJobId !== prevProps.selectedJobId
     ) {
       this.loadBugSuggestions();
     }
@@ -58,28 +62,120 @@ class FailureSummaryTab extends React.Component {
     });
   };
 
+  fileInternalIssue = (suggestion) => {
+    const { selectedJob, pinJob } = this.props;
+
+    pinJob(selectedJob);
+    this.setState({
+      isInternalIssueFilerOpen: true,
+      suggestion,
+    });
+  };
+
   toggleBugFiler = () => {
     this.setState((prevState) => ({
       isBugFilerOpen: !prevState.isBugFilerOpen,
     }));
   };
 
-  bugFilerCallback = (data) => {
+  toggleInternalIssueFiler = () => {
+    this.setState((prevState) => ({
+      isInternalIssueFilerOpen: !prevState.isInternalIssueFilerOpen,
+    }));
+  };
+
+  bugFilerCallback = async (data) => {
     const { addBug } = this.props;
 
-    addBug({ id: data.success });
+    await addBug({ id: data.id, newBug: data.id });
     window.dispatchEvent(new CustomEvent(thEvents.saveClassification));
     // Open the newly filed bug in a new tab or window for further editing
-    window.open(getBugUrl(data.success));
+    window.open(data.url);
+  };
+
+  checkInternalFailureOccurrences = (bugInternalId) => {
+    // Try matching an internal bug already fetched with enough occurences
+    const { suggestions } = this.state;
+
+    const internalBugs = suggestions
+      .flatMap((s) => s.bugs.open_recent)
+      .filter((bug) => bug.id === null);
+    const existingBug = internalBugs.filter(
+      (bug) => bug.internal_id === bugInternalId,
+    )[0];
+    if (!existingBug) {
+      return;
+    }
+    const suggestion = suggestions.find((s) =>
+      s.bugs.open_recent
+        .map((bug) => bug.internal_id)
+        .includes(existingBug.internal_id),
+    );
+    // Check if we reached the required number of occurrence to open a bug in Bugzilla
+    if (existingBug.occurrences >= requiredInternalOccurrences - 1) {
+      existingBug.occurrences += 1;
+      this.fileBug(suggestion);
+    }
+  };
+
+  internalIssueFilerCallback = async (data) => {
+    const { addBug } = this.props;
+
+    await addBug({ ...data, newBug: `i${data.internal_id}` });
+    window.dispatchEvent(new CustomEvent(thEvents.saveClassification));
+
+    this.checkInternalFailureOccurrences(data.internal_id);
+  };
+
+  isGenericFailure = (search, pathEnd) => {
+    const match =
+      search.match(/^TEST-UNEXPECTED-\w+ \| (.+?) \| finished in \d+ms$/) ||
+      search.match(
+        /^TEST-UNEXPECTED-\w+ \| (.+?) \| xpcshell return code: -?\d+$/,
+      );
+
+    return match && match[1] === pathEnd;
+  };
+
+  filterGenericFailures = (suggestions) => {
+    if (suggestions.length <= 1) {
+      return suggestions;
+    }
+
+    // First pass: collect test paths with at least one non-generic error
+    const testPathsWithSpecificErrors = new Set();
+    suggestions.forEach((suggestion) => {
+      if (
+        suggestion.path_end &&
+        !this.isGenericFailure(suggestion.search, suggestion.path_end)
+      ) {
+        testPathsWithSpecificErrors.add(suggestion.path_end);
+      }
+    });
+
+    // Second pass: filter out generic errors
+    return suggestions.filter((suggestion) => {
+      // Filter taskcluster errors since there are other messages (length > 1)
+      if (/^\[taskcluster:error\] exit status -?\d+$/.test(suggestion.search)) {
+        return false;
+      }
+
+      // Filter generic per-test errors if this test has specific errors
+      return (
+        !this.isGenericFailure(suggestion.search, suggestion.path_end) ||
+        !testPathsWithSpecificErrors.has(suggestion.path_end)
+      );
+    });
   };
 
   loadBugSuggestions = () => {
-    const { repoName, selectedJob } = this.props;
+    const { selectedJobId } = this.props;
 
-    if (!selectedJob) {
+    if (!selectedJobId) {
       return;
     }
-    BugSuggestionsModel.get(selectedJob.id).then(async (suggestions) => {
+    this.setState({ bugSuggestionsLoading: true });
+    BugSuggestionsModel.get(selectedJobId).then(async (suggestions) => {
       suggestions.forEach((suggestion) => {
         suggestion.bugs.too_many_open_recent =
           suggestion.bugs.open_recent.length > thBugSuggestionLimit;
@@ -96,60 +192,65 @@ class FailureSummaryTab extends React.Component {
           !suggestion.bugs.too_many_open_recent;
       });
 
-      // if we have no bug suggestions, populate with the raw errors from
-      // the log (we can do this asynchronously, it should normally be
-      // fast)
-      if (!suggestions.length) {
-        const { data, failureStatus } = await getData(
-          getProjectJobUrl(textLogErrorsEndpoint, selectedJob.id),
-        );
-        if (!failureStatus && data.length) {
-          const errors = data.map((error) => ({
-            line: error.line,
-            line_number: error.line_number,
-            logViewerUrl: getLogViewerUrl(
-              selectedJob.id,
-              repoName,
-              error.line_number,
-            ),
-          }));
-          this.setState({ errors });
-        }
-      }
+      // Filter out generic failure messages when specific ones exist for the same test
+      const filteredSuggestions = this.filterGenericFailures(suggestions);
 
-      this.setState({ bugSuggestionsLoading: false, suggestions }, () => {
-        const scrollArea = document.querySelector(
-          '#failure-summary-scroll-area',
-        );
+      this.setState(
+        { bugSuggestionsLoading: false, suggestions: filteredSuggestions },
+        () => {
+          const scrollArea = document.querySelector(
+            '#failure-summary-scroll-area',
+          );
 
-        if (scrollArea.scrollTo) {
-          scrollArea.scrollTo(0, 0);
-          window.getSelection().removeAllRanges();
-        }
-      });
+          if (scrollArea.scrollTo) {
+            scrollArea.scrollTo(0, 0);
+            window.getSelection().removeAllRanges();
+          }
+        },
+      );
     });
   };
 
   render() {
     const {
-      jobLogUrls,
-      logParseStatus,
-      logViewerFullUrl,
+      jobLogUrls = [],
+      jobDetails = [],
+      logParseStatus = 'pending',
+      logViewerFullUrl = null,
       selectedJob,
-      addBug,
-      repoName,
-      developerMode,
+      addBug = null,
+      currentRepo,
+      developerMode = false,
     } = this.props;
     const {
       isBugFilerOpen,
+      isInternalIssueFilerOpen,
       suggestion,
       bugSuggestionsLoading,
       suggestions,
       errors,
     } = this.state;
-    const logs = jobLogUrls;
+    const logs = jobLogUrls.filter(
+      (jlu) => !jlu.name.includes('perfherder-data'),
+    );
     const jobLogsAllParsed =
       logs.length > 0 && logs.every((jlu) => jlu.parse_status !== 'pending');
+
+    selectedJob.newFailure = 0;
+    suggestions.forEach((suggestion) => {
+      suggestion.showNewButton = false;
+      // small hack here to use counter==0 and try for display only
+      if (
+        suggestion.search.split(' | ').length === 3 &&
+        (suggestion.failure_new_in_rev === true ||
+          (suggestion.counter === 0 && currentRepo.name === 'try'))
+      ) {
+        if (selectedJob.newFailure === 0) {
+          suggestion.showNewButton = true;
+        }
+        selectedJob.newFailure++;
+      }
+    });
 
     return (
       <div className="w-100 h-100" role="region" aria-label="Failure Summary">
@@ -160,16 +261,30 @@ class FailureSummaryTab extends React.Component {
           ref={this.fsMount}
           id="failure-summary-scroll-area"
         >
+          {selectedJob.newFailure > 0 && (
+            <Button
+              className="failure-summary-new-message border-0"
+              title="New Test Failure"
+            >
+              {selectedJob.newFailure} new failure line(s). First one is
+              flagged, it might be good to look at all failures in this job.
+            </Button>
+          )}
+
           {suggestions.map((suggestion, index) => (
             <SuggestionsListItem
-              key={index} // eslint-disable-line react/no-array-index-key
+              key={`${selectedJob.id}-${index}`} // eslint-disable-line react/no-array-index-key
               index={index}
               suggestion={suggestion}
               toggleBugFiler={() => this.fileBug(suggestion)}
+              toggleInternalIssueFiler={() =>
+                this.fileInternalIssue(suggestion)
+              }
               selectedJob={selectedJob}
               addBug={addBug}
-              repoName={repoName}
+              currentRepo={currentRepo}
               developerMode={developerMode}
+              jobDetails={jobDetails}
             />
           ))}
 
@@ -254,13 +369,26 @@ class FailureSummaryTab extends React.Component {
             toggle={this.toggleBugFiler}
             suggestion={suggestion}
             suggestions={suggestions}
-            fullLog={jobLogUrls[0].url}
+            fullLog={logs[0].url}
             parsedLog={logViewerFullUrl}
             reftestUrl={
-              isReftest(selectedJob) ? getReftestUrl(jobLogUrls[0].url) : ''
+              isReftest(selectedJob) ? getReftestUrl(logs[0].url) : ''
             }
             successCallback={this.bugFilerCallback}
+            selectedJob={selectedJob}
+            currentRepo={currentRepo}
+            platform={selectedJob.platform}
+          />
+        )}
+
+        {isInternalIssueFilerOpen && (
+          <InternalIssueFiler
+            isOpen={isInternalIssueFilerOpen}
+            suggestion={suggestion}
+            toggle={this.toggleInternalIssueFiler}
             jobGroupName={selectedJob.job_group_name}
+            jobTypeName={selectedJob.job_type_name}
+            successCallback={this.internalIssueFilerCallback}
           />
         )}
       </div>
@@ -270,22 +398,29 @@ class FailureSummaryTab extends React.Component {
 
 FailureSummaryTab.propTypes = {
   selectedJob: PropTypes.shape({}).isRequired,
-  jobLogUrls: PropTypes.arrayOf(PropTypes.object),
+  selectedJobId: PropTypes.number,
+  jobLogUrls: PropTypes.arrayOf(
+    PropTypes.shape({
+      id: PropTypes.number,
+      job_id: PropTypes.number,
+      name: PropTypes.string.isRequired,
+      url: PropTypes.string.isRequired,
+      parse_status: PropTypes.string,
+    }),
+  ),
+  jobDetails: PropTypes.arrayOf(
+    PropTypes.shape({
+      url: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+      title: PropTypes.string.isRequired,
+    }),
+  ),
   logParseStatus: PropTypes.string,
   logViewerFullUrl: PropTypes.string,
-  repoName: PropTypes.string.isRequired,
+  currentRepo: PropTypes.shape({}).isRequired,
   addBug: PropTypes.func,
   pinJob: PropTypes.func,
   developerMode: PropTypes.bool,
-};
-
-FailureSummaryTab.defaultProps = {
-  jobLogUrls: [],
-  logParseStatus: 'pending',
-  logViewerFullUrl: null,
-  addBug: null,
-  pinJob: null,
-  developerMode: false,
 };
 
 export default FailureSummaryTab;

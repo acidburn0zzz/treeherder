@@ -2,7 +2,7 @@ import React from 'react';
 import PropTypes from 'prop-types';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faUser } from '@fortawesome/free-regular-svg-icons';
-import { Row, UncontrolledTooltip } from 'reactstrap';
+import { OverlayTrigger, Tooltip } from 'react-bootstrap';
 
 import { parseAuthor } from '../helpers/revision';
 
@@ -13,7 +13,7 @@ export function AuthorInitials(props) {
   const str = props.author || '';
   const words = str.split(' ');
   const firstLetters = words
-    .map((word) => word.replace(/[^A-Z]/gi, '')[0])
+    .map((word) => word.replace(/\P{General_Category=Letter}/gu, '')[0])
     .filter((firstLetter) => typeof firstLetter !== 'undefined');
   let initials = '';
 
@@ -29,7 +29,7 @@ export function AuthorInitials(props) {
       <span className="text-secondary">
         <FontAwesomeIcon icon={faUser} />
       </span>
-      <span className="ml-1 icon-superscript font-italic font-weight-bold text-secondary user-push-initials">
+      <span className="ms-1 icon-superscript font-italic font-weight-bold text-secondary user-push-initials">
         {initials}
       </span>
     </span>
@@ -55,7 +55,12 @@ export class Revision extends React.PureComponent {
   };
 
   isBackout = (comment) => {
-    return comment.search('Backed out') >= 0 || comment.search('Back out') >= 0;
+    // 'Revert' commits directly after migration to Git VCS when no `hg oops` equivalent available.
+    return (
+      comment.search('Backed out') >= 0 ||
+      comment.search('Back out') >= 0 ||
+      comment.startsWith('Revert')
+    );
   };
 
   render() {
@@ -63,8 +68,8 @@ export class Revision extends React.PureComponent {
       revision: { comments, author, revision },
       repo,
       bugSummaryMap,
-      commitShaClass,
-      commentFont,
+      commitShaClass = 'commit-sha',
+      commentFont = '',
     } = this.props;
     const comment = comments.split('\n')[0];
     const bugMatches = comment.match(/-- ([0-9]+)|bug.([0-9]+)/gi);
@@ -76,11 +81,11 @@ export class Revision extends React.PureComponent {
       : 'text-secondary';
 
     return (
-      <Row className="revision flex-nowrap" data-testid="revision">
+      <div className="revision d-flex flex-nowrap" data-testid="revision">
         <span
           onMouseEnter={() => this.showClipboard(true)}
           onMouseLeave={() => this.showClipboard(false)}
-          className="pr-1 text-nowrap"
+          className="pe-1 text-nowrap"
         >
           <Clipboard
             description="full hash"
@@ -90,40 +95,41 @@ export class Revision extends React.PureComponent {
           <a
             title={`Open revision ${commitRevision} on ${repo.url}`}
             href={repo.getRevisionHref(commitRevision)}
-            className={`commit-sha ${commitShaClass}`}
+            className={commitShaClass}
           >
             {commitRevision.substring(0, 12)}
           </a>
         </span>
         <AuthorInitials title={`${name}: ${email}`} author={name} />
-        <span
-          data-testid={comment}
-          className={`ml-2 revision-comment overflow-hidden text-nowrap ${commentColor} ${commentFont}`}
-          id={`revision${revision}`}
+        <OverlayTrigger
+          placement="auto"
+          overlay={
+            <Tooltip className="tooltip-content">
+              {bugSummaryMap &&
+                !!bugMatches &&
+                bugMatches.map((bug) => {
+                  const bugId = bug.split(' ')[1];
+                  return (
+                    <div key={bugId} className="mb-3">
+                      Bug {bugId} - {bugSummaryMap[bugId]}
+                    </div>
+                  );
+                })}
+              <div>Commit:</div>
+              <span>{comment}</span>
+            </Tooltip>
+          }
         >
-          <em>
-            <BugLinkify id={revision}>{comment}</BugLinkify>
-          </em>
-        </span>
-        <UncontrolledTooltip
-          placement="top-start"
-          innerClassName="tooltip-content"
-          target={`revision${revision}`}
-        >
-          {bugSummaryMap &&
-            !!bugMatches &&
-            bugMatches.map((bug) => {
-              const bugId = bug.split(' ')[1];
-              return (
-                <div key={bugId} className="mb-3">
-                  Bug {bugId} - {bugSummaryMap[bugId]}
-                </div>
-              );
-            })}
-          <div>Commit:</div>
-          <span>{comment}</span>
-        </UncontrolledTooltip>
-      </Row>
+          <span
+            data-testid={comment}
+            className={`ms-2 revision-comment overflow-hidden text-truncate ${commentColor} ${commentFont}`}
+          >
+            <span className="text-wrap">
+              <BugLinkify id={revision}>{comment}</BugLinkify>
+            </span>
+          </span>
+        </OverlayTrigger>
+      </div>
     );
   }
 }
@@ -140,9 +146,4 @@ Revision.propTypes = {
   }).isRequired,
   commitShaClass: PropTypes.string,
   commentFont: PropTypes.string,
-};
-
-Revision.defaultProps = {
-  commitShaClass: '',
-  commentFont: '',
 };

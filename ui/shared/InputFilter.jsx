@@ -1,16 +1,15 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { InputGroup, Input } from 'reactstrap';
+import { InputGroup, Form } from 'react-bootstrap';
 import debounce from 'lodash/debounce';
 
-import { filterText } from '../perfherder/constants';
+import { filterText } from '../perfherder/perf-helpers/constants';
 
 export default class InputFilter extends React.Component {
-  // eslint-disable-next-line react/sort-comp
   constructor(props) {
     super(props);
     this.state = {
-      input: '',
+      input: props.filteredTextValue ?? '',
     };
   }
 
@@ -18,6 +17,14 @@ export default class InputFilter extends React.Component {
     () => this.props.updateFilterText(this.state.input),
     800,
   );
+
+  componentDidUpdate(prevProps) {
+    const { filteredTextValue } = this.props;
+
+    if (filteredTextValue !== prevProps.filteredTextValue) {
+      this.setState({ input: filteredTextValue ?? '' });
+    }
+  }
 
   updateInput = (event) => {
     const { updateFilterText, updateOnEnter } = this.props;
@@ -44,14 +51,24 @@ export default class InputFilter extends React.Component {
   };
 
   render() {
-    const { disabled, placeholder, updateOnEnter } = this.props;
+    const {
+      disabled = false,
+      placeholder = filterText.inputPlaceholder,
+      updateOnEnter = false,
+    } = this.props;
     const { input } = this.state;
 
     return (
       <InputGroup>
-        <Input
+        <Form.Control
           onChange={this.updateInput}
-          onKeyDown={updateOnEnter ? this.userActionListener : undefined}
+          onKeyDown={(e) => {
+            if (updateOnEnter) {
+              this.userActionListener(e);
+            } else if (e.key === 'Enter') {
+              e.preventDefault();
+            }
+          }}
           placeholder={placeholder}
           value={input}
           disabled={disabled}
@@ -67,10 +84,4 @@ InputFilter.propTypes = {
   disabled: PropTypes.bool,
   placeholder: PropTypes.string,
   updateOnEnter: PropTypes.bool,
-};
-
-InputFilter.defaultProps = {
-  disabled: false,
-  placeholder: filterText.inputPlaceholder,
-  updateOnEnter: false,
 };

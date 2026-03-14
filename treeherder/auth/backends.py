@@ -23,41 +23,41 @@ logger = logging.getLogger(__name__)
 # with lots of notice in advance. In order to mitigate the additional HTTP request
 # as well as the possiblity of receiving a 503 status code, we use a static json file to
 # read its content.
-with open('treeherder/auth/jwks.json') as f:
+with open("treeherder/auth/jwks.json") as f:
     jwks = json.load(f)
 
 
 class AuthBackend:
     def _get_access_token_expiry(self, request):
-        expiration_timestamp_in_seconds = request.META.get('HTTP_ACCESS_TOKEN_EXPIRES_AT')
+        expiration_timestamp_in_seconds = request.META.get("HTTP_ACCESS_TOKEN_EXPIRES_AT")
 
         if not expiration_timestamp_in_seconds:
-            raise AuthenticationFailed('Access-Token-Expires-At header is expected')
+            raise AuthenticationFailed("Access-Token-Expires-At header is expected")
 
         try:
             return int(expiration_timestamp_in_seconds)
         except ValueError:
-            raise AuthenticationFailed('Access-Token-Expires-At header value is invalid')
+            raise AuthenticationFailed("Access-Token-Expires-At header value is invalid")
 
     def _get_access_token(self, request):
-        auth = request.META.get('HTTP_AUTHORIZATION')
+        auth = request.META.get("HTTP_AUTHORIZATION")
 
         if not auth:
-            raise AuthenticationFailed('Authorization header is expected')
+            raise AuthenticationFailed("Authorization header is expected")
 
         parts = auth.split()
 
-        if len(parts) != 2 or parts[0].lower() != 'bearer':
+        if len(parts) != 2 or parts[0].lower() != "bearer":
             raise AuthenticationFailed("Authorization header must be of form 'Bearer {token}'")
 
         token = parts[1]
         return token
 
     def _get_id_token(self, request):
-        id_token = request.META.get('HTTP_ID_TOKEN')
+        id_token = request.META.get("HTTP_ID_TOKEN")
 
         if not id_token:
-            raise AuthenticationFailed('Id-Token header is expected')
+            raise AuthenticationFailed("Id-Token header is expected")
 
         return id_token
 
@@ -65,15 +65,28 @@ class AuthBackend:
         # `exp` is the expiration of the ID token in seconds since the epoch:
         # https://auth0.com/docs/tokens/id-token#id-token-payload
         # https://openid.net/specs/openid-connect-core-1_0.html#IDToken
-        return user_info['exp']
+        return user_info["exp"]
+
+    def _get_is_sheriff_from_userinfo(self, user_info):
+        """
+        Set users in sheriffing group in jwt response as is_staff
+        """
+
+        groups = (
+            user_info["https://sso.mozilla.com/claim/groups"]
+            if "https://sso.mozilla.com/claim/groups" in user_info
+            else []
+        )
+
+        return 1 if ("sheriff" in groups or "perf_sheriff" in groups) else 0
 
     def _get_username_from_userinfo(self, user_info):
         """
         Get the user's username from the jwt sub property
         """
 
-        subject = user_info['sub']
-        email = user_info['email']
+        subject = user_info["sub"]
+        email = user_info["email"]
 
         if "Mozilla-LDAP" in subject:
             return "mozilla-ldap/" + email
@@ -126,10 +139,10 @@ class AuthBackend:
         try:
             unverified_header = jwt.get_unverified_header(id_token)
         except jwt.JWTError:
-            raise AuthError('Unable to decode the Id token header')
+            raise AuthError("Unable to decode the Id token header")
 
-        if 'kid' not in unverified_header:
-            raise AuthError('Id token header missing RSA key ID')
+        if "kid" not in unverified_header:
+            raise AuthError("Id token header missing RSA key ID")
 
         rsa_key = None
         for key in jwks["keys"]:
@@ -144,21 +157,21 @@ class AuthBackend:
                 break
 
         if not rsa_key:
-            raise AuthError('Id token using unrecognised RSA key ID')
+            raise AuthError("Id token using unrecognised RSA key ID")
 
         try:
             # https://python-jose.readthedocs.io/en/latest/jwt/api.html#jose.jwt.decode
             user_info = jwt.decode(
                 id_token,
                 rsa_key,
-                algorithms=['RS256'],
+                algorithms=["RS256"],
                 audience=AUTH0_CLIENTID,
                 access_token=access_token,
                 issuer="https://" + AUTH0_DOMAIN + "/",
             )
             return user_info
         except jwt.ExpiredSignatureError:
-            raise AuthError('Id token is expired')
+            raise AuthError("Id token is expired")
         except jwt.JWTClaimsError:
             raise AuthError("Incorrect claims: please check the audience and issuer")
         except jwt.JWTError:
@@ -170,6 +183,16 @@ class AuthBackend:
         id_token_expiry_timestamp = self._get_id_token_expiry(user_info)
         now_in_seconds = int(time.time())
 
+        # Log token expiration details
+        logger.debug(
+            "Token expiration details - Access token: %s (%s), ID token: %s (%s), Current time: %s",
+            access_token_expiry_timestamp,
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(access_token_expiry_timestamp)),
+            id_token_expiry_timestamp,
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(id_token_expiry_timestamp)),
+            time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(now_in_seconds)),
+        )
+
         # The session length is set to match whichever token expiration time is closer.
         earliest_expiration_timestamp = min(
             access_token_expiry_timestamp, id_token_expiry_timestamp
@@ -177,28 +200,63 @@ class AuthBackend:
         seconds_until_expiry = earliest_expiration_timestamp - now_in_seconds
 
         if seconds_until_expiry <= 0:
-            raise AuthError('Session expiry time has already passed!')
+            logger.error(
+                "Session expiry time has already passed! Current time exceeds token expiration."
+            )
+            raise AuthError("Session expiry time has already passed!")
 
         return seconds_until_expiry
 
     def authenticate(self, request):
-        access_token = self._get_access_token(request)
-        id_token = self._get_id_token(request)
-
-        user_info = self._get_user_info(access_token, id_token)
-        username = self._get_username_from_userinfo(user_info)
-
-        seconds_until_expiry = self._calculate_session_expiry(request, user_info)
-        logger.debug('Updating session to expire in %i seconds', seconds_until_expiry)
-        request.session.set_expiry(seconds_until_expiry)
-
+        logger.debug("Authentication attempt started")
         try:
-            return User.objects.get(username=username)
-        except ObjectDoesNotExist:
-            # The user doesn't already exist, so create it since we allow
-            # anyone with SSO access to create an account on Treeherder.
-            logger.debug('Creating new user: %s', username)
-            return User.objects.create_user(username, email=user_info['email'])
+            access_token = self._get_access_token(request)
+            id_token = self._get_id_token(request)
+            logger.debug("Authentication tokens retrieved successfully")
+
+            user_info = self._get_user_info(access_token, id_token)
+            username = self._get_username_from_userinfo(user_info)
+            is_sheriff = self._get_is_sheriff_from_userinfo(user_info)
+            logger.debug("User info retrieved for: %s", username)
+
+            seconds_until_expiry = self._calculate_session_expiry(request, user_info)
+            logger.debug(
+                "Updating session to expire in %i seconds for user %s",
+                seconds_until_expiry,
+                username,
+            )
+
+            # Convert seconds to more readable format
+            hours = seconds_until_expiry // 3600
+            minutes = (seconds_until_expiry % 3600) // 60
+            logger.debug("Session will expire in %d hours and %d minutes", hours, minutes)
+
+            request.session.set_expiry(seconds_until_expiry)
+
+            try:
+                user = User.objects.get(username=username)
+                logger.debug("Existing user authenticated: %s", username)
+                if user.is_staff != is_sheriff:
+                    user.is_staff = is_sheriff
+                    user.save()
+                    logger.debug("Updated staff status for user %s to %s", username, is_sheriff)
+                return user
+            except ObjectDoesNotExist:
+                # The user doesn't already exist, so create it since we allow
+                # anyone with SSO access to create an account on Treeherder.
+                logger.debug("Creating new user: %s", username)
+                return User.objects.create_user(
+                    username, email=user_info["email"], password=None, is_staff=is_sheriff
+                )
+        except AuthenticationFailed as e:
+            logger.error("Authentication failed: %s", str(e))
+            raise
+        except AuthError as e:
+            logger.error("Auth error during authentication: %s", str(e))
+            raise
+        except Exception as e:
+            logger.error("Unexpected error during authentication: %s", str(e))
+            raise
 
     def get_user(self, user_id):
         try:

@@ -1,24 +1,24 @@
-class NoDataCyclingAtAll(Exception):
+class NoDataCyclingAtAllError(Exception):
     def __str__(self):
-        msg = 'No data cycling could be performed.'
+        msg = "No data cycling could be performed."
         if self.__cause__:
-            msg = f'{msg} (Reason: {self.__cause__})'
+            msg = f"{msg} (Reason: {self.__cause__})"
         return msg
 
 
-class MaxRuntimeExceeded(Exception):
+class MaxRuntimeExceededError(Exception):
     pass
 
 
-class MissingRecords(Exception):
+class MissingRecordsError(Exception):
     pass
 
 
-class CannotBackfill(Exception):
+class CannotBackfillError(Exception):
     pass
 
 
-class NoFiledBugs(Exception):
+class NoFiledBugsError(Exception):
     pass
 
 

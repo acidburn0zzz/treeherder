@@ -1,9 +1,9 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Container } from 'reactstrap';
+import { Container } from 'react-bootstrap';
 
 import FilterControls from '../../shared/FilterControls';
-import { containsText } from '../helpers';
+import { containsText } from '../perf-helpers/helpers';
 
 import TestsTable from './TestsTable';
 
@@ -34,7 +34,7 @@ export default class TestsTableControls extends React.Component {
 
   updateFilteredResults = () => {
     const { filterText } = this.state;
-    const { testsOverviewResults } = this.props;
+    const { testsOverviewResults = [] } = this.props;
 
     if (!filterText) {
       return this.setState({ results: testsOverviewResults });
@@ -57,9 +57,16 @@ export default class TestsTableControls extends React.Component {
   };
 
   render() {
-    const { dropdownOptions, projectsMap, platformsMap } = this.props;
+    const {
+      dropdownOptions = [],
+      projectsMap,
+      platformsMap,
+      allFrameworks,
+    } = this.props;
     const { results } = this.state;
-
+    let framework = false;
+    if (dropdownOptions[0] !== undefined)
+      framework = dropdownOptions[0].selectedItem;
     return (
       <Container fluid className="my-3 px-0">
         <FilterControls
@@ -70,6 +77,8 @@ export default class TestsTableControls extends React.Component {
 
         <TestsTable
           results={results}
+          framework={framework}
+          allFrameworks={allFrameworks}
           projectsMap={projectsMap}
           platformsMap={platformsMap}
         />
@@ -85,9 +94,4 @@ TestsTableControls.propTypes = {
     .isRequired,
   platformsMap: PropTypes.oneOfType([PropTypes.bool, PropTypes.shape({})])
     .isRequired,
-};
-
-TestsTableControls.defaultProps = {
-  testsOverviewResults: [],
-  dropdownOptions: [],
 };

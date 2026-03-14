@@ -3,15 +3,19 @@
 // https://github.com/mozilla/treeherder/blob/master/treeherder/middleware.py
 import tcLibUrls from 'taskcluster-lib-urls';
 
-export const uiJobsUrlBase = '/#/jobs';
+export const uiJobsUrlBase = '/jobs';
 
-export const uiPushHealthBase = '/pushhealth.html';
+export const uiPushHealthBase = '/push-health';
+
+export const uiPerfherderBase = '/perfherder';
+
+export const thBaseUrl = 'https://treeherder.mozilla.org/';
 
 export const bzBaseUrl = 'https://bugzilla.mozilla.org/';
 
-export const hgBaseUrl = 'https://hg.mozilla.org/';
+export const landoBaseUrl = 'https://api.lando.services.mozilla.com/';
 
-export const dxrBaseUrl = 'https://dxr.mozilla.org/';
+export const bzComponentEndpoint = '/bugzilla-component/';
 
 export const bugsEndpoint = '/failures/';
 
@@ -19,9 +23,11 @@ export const bugDetailsEndpoint = '/failuresbybug/';
 
 export const graphsEndpoint = '/failurecount/';
 
+export const groupSummary = '/groupsummary/';
+
 export const deployedRevisionUrl = '/revision.txt';
 
-export const loginCallbackUrl = '/login.html';
+export const loginCallbackUrl = '/login';
 
 export const platformsEndpoint = '/machineplatforms/';
 
@@ -31,9 +37,11 @@ export const investigatedTestsEndPoint = '/investigated-tests/';
 
 export const repoEndpoint = '/repository/';
 
-export const tcAuthCallbackUrl = '/taskcluster-auth.html';
+export const tcAuthCallbackUrl = '/taskcluster-auth';
 
 export const textLogErrorsEndpoint = '/text_log_errors/';
+
+export const landoLandingJobsEndPoint = 'landing_jobs/';
 
 export const getRunnableJobsURL = function getRunnableJobsURL(
   decisionTask,
@@ -93,7 +101,7 @@ export const getInspectTaskUrl = function getInspectTaskUrl(
 };
 
 export const getReftestUrl = function getReftestUrl(logUrl) {
-  return `https://hg.mozilla.org/mozilla-central/raw-file/tip/layout/tools/reftest/reftest-analyzer.xhtml#logurl=${logUrl}&only_show_unexpected=1`;
+  return `https://hg.mozilla.org/mozilla-central/raw-file/default/layout/tools/reftest/reftest-analyzer.xhtml#logurl=${logUrl}&only_show_unexpected=1`;
 };
 
 // repoName here is necessary because this data comes from the /jobs endpoint
@@ -104,13 +112,42 @@ export const getLogViewerUrl = function getLogViewerUrl(
   jobId,
   repoName,
   lineNumber,
+  task,
 ) {
-  const rv = `logviewer.html#?job_id=${jobId}&repo=${repoName}`;
+  let rv = `/logviewer?job_id=${jobId}&repo=${repoName}`;
+  if (task?.task_id && task.retry_id !== undefined) {
+    rv += `&task=${task.task_id}.${task.retry_id}`;
+  }
   return lineNumber ? `${rv}&lineNumber=${lineNumber}` : rv;
 };
 
-export const getPerfAnalysisUrl = function getPerfAnalysisUrl(url) {
-  return `https://profiler.firefox.com/from-url/${encodeURIComponent(url)}`;
+export const isResourceUsageProfile = function isResourceUsageProfile(
+  fileName,
+) {
+  return [
+    'profile_build_resources.json',
+    'profile_resource-usage.json',
+  ].includes(fileName);
+};
+
+export const getPerfAnalysisUrl = function getPerfAnalysisUrl(url, job) {
+  let profilerUrl = `https://profiler.firefox.com/from-url/${encodeURIComponent(
+    url,
+  )}`;
+
+  // Add a profileName parameter with the job name and id for resource usage profiles.
+  if (job && isResourceUsageProfile(url.split('/').pop())) {
+    const profileName = `${job.job_type_name} (${job.task_id}.${job.retry_id})`;
+    profilerUrl += `?profileName=${encodeURIComponent(profileName)}`;
+  }
+
+  return profilerUrl;
+};
+
+export const getCrashViewerUrl = function getCrashViewerUrl(crashJsonUrl) {
+  return `https://tests.firefox.dev/crash-viewer.html?url=${encodeURIComponent(
+    crashJsonUrl,
+  )}`;
 };
 
 // This takes a plain object, rather than a URLSearchParams object.
@@ -120,11 +157,13 @@ export const getJobsUrl = function getJobsUrl(params) {
 
 // This takes a plain object, rather than a URLSearchParams object.
 export const getPushHealthUrl = function getPushHealthUrl(params) {
-  return `${uiPushHealthBase}${createQueryParams(params)}`;
+  return `${uiPushHealthBase}/push${createQueryParams(params)}`;
 };
 
-export const getCompareChooserUrl = function getCompareChooserUrl(params) {
-  return `perf.html#/comparechooser${createQueryParams(params)}`;
+export const getPerfCompareChooserUrl = function getPerfCompareChooserUrl(
+  params,
+) {
+  return `https://perf.compare${createQueryParams(params)}`;
 };
 
 export const parseQueryParams = function parseQueryParams(search) {
@@ -134,12 +173,6 @@ export const parseQueryParams = function parseQueryParams(search) {
     (acc, [key, value]) => ({ ...acc, [key]: value }),
     {},
   );
-};
-
-export const extractSearchString = function getQueryString(url) {
-  const parts = url.split('?');
-
-  return parts[parts.length - 1];
 };
 
 // `api` requires a preceding forward slash
@@ -160,10 +193,100 @@ export const getRevisionUrl = (revision, projectName) =>
 
 export const updateQueryParams = function updateHistoryWithQueryParams(
   queryParams,
-  history,
+  navigate,
   location,
 ) {
-  history.replace({ pathname: location.pathname, search: queryParams });
-  // we do this so the api's won't be called twice (location/history updates will trigger a lifecycle hook)
-  location.search = queryParams;
+  // React Router v6 uses navigate() instead of history.push()
+  navigate({ pathname: location.pathname, search: queryParams });
+};
+
+export const getPernoscoURL = (taskId) =>
+  `https://pernos.co/self-service-api/mozilla/${taskId}/self-service.html`;
+
+export const getPerfCompareBaseURL = function getOldCompareWithBaseViewURL(
+  originalProject,
+  originalRevision,
+  newProject,
+  newRevision,
+  framework,
+) {
+  const params = {
+    baseRev: originalRevision,
+    baseRepo: originalProject,
+    newRev: newRevision,
+    newRepo: newProject,
+    framework,
+  };
+  return `https://perf.compare/compare-results${createQueryParams(
+    params,
+  )}&sort=delta|desc`;
+};
+
+export const getPerfCompareBaseSubtestsURL = function getPerfCompareBaseSubtestsURL(
+  originalProject,
+  originalRevision,
+  newProject,
+  newRevision,
+  framework,
+  originalSignature,
+  newSignature,
+) {
+  const params = {
+    baseRev: originalRevision,
+    baseRepo: originalProject,
+    newRev: newRevision,
+    newRepo: newProject,
+    framework,
+    baseParentSignature: originalSignature,
+    newParentSignature: newSignature,
+  };
+  return `https://perf.compare/subtests-compare-results${createQueryParams(
+    params,
+  )}`;
+};
+
+export const getPerfCompareOvertimeURL = function getPerfCompareOvertimeURL(
+  originalProject,
+  newProject,
+  newRevision,
+  framework,
+  timeRange,
+) {
+  const params = {
+    baseRepo: originalProject,
+    newRev: newRevision,
+    newRepo: newProject,
+    framework,
+    selectedTimeRange: timeRange,
+  };
+  return `https://perf.compare/compare-over-time-results${createQueryParams(
+    params,
+  )}`;
+};
+
+export const getPerfCompareOvertimeSubtestsURL = function getPerfCompareOvertimeSubtestsURL(
+  originalProject,
+  newProject,
+  newRevision,
+  framework,
+  timeRange,
+  originalSignature,
+  newSignature,
+) {
+  const params = {
+    baseRepo: originalProject,
+    newRev: newRevision,
+    newRepo: newProject,
+    framework,
+    selectedTimeRange: timeRange,
+    baseParentSignature: originalSignature,
+    newParentSignature: newSignature,
+  };
+  return `https://perf.compare/subtests-compare-over-time-results${createQueryParams(
+    params,
+  )}`;
+};
+
+export const getLandoJobsUrl = function getLandoJobsUrl(landoCommitID) {
+  return `${landoBaseUrl}${landoLandingJobsEndPoint}${landoCommitID}`;
 };

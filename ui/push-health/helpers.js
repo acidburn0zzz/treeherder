@@ -1,12 +1,3 @@
-export const resultColorMap = {
-  pass: 'success',
-  fail: 'danger',
-  indeterminate: 'darker-secondary',
-  done: 'darker-info',
-  'in progress': 'darker-secondary',
-  none: 'darker-info',
-};
-
 export const taskResultColorMap = {
   success: 'success',
   testfailed: 'danger',
@@ -14,20 +5,15 @@ export const taskResultColorMap = {
   unknown: 'darker-secondary',
 };
 
-export const filterTests = (tests, searchStr, showParentMatches) => {
+export const filterTests = (tests, searchStr) => {
   const filters = searchStr.split(' ').map((filter) => new RegExp(filter, 'i'));
-  const testsFilteredForParentMatches = tests.filter(
-    (test) =>
-      !test.failedInParent || (test.failedInParent && showParentMatches),
-  );
 
-  return testsFilteredForParentMatches.filter((test) =>
+  return tests.filter((test) =>
     filters.every((f) =>
       f.test(`${test.testName} ${test.platform} ${test.config}`),
     ),
   );
 };
 
-export const filterJobs = (jobs, showParentMatches) => {
-  return jobs.filter((job) => job.failedInParent === showParentMatches);
-};
+export const myPushesDefaultMessage =
+  'Log in or use the author query string to see pushes';

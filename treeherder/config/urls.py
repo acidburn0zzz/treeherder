@@ -1,17 +1,21 @@
 from django.conf import settings
-from django.conf.urls import include, url
-from rest_framework.documentation import include_docs_urls
+from django.urls import include, re_path
+from django.views.generic.base import TemplateView
 
 from treeherder.webapp.api import urls as api_urls
 
-urlpatterns = [
-    url(r'^api/', include(api_urls)),
-    url(r'^docs/', include_docs_urls(title='REST API Docs')),
-]
+urlpatterns = []
+# The order is important for the debug toolbar; it needs to be first
+# or the panels won't work
 
 if settings.DEBUG:
     import debug_toolbar
 
     urlpatterns += [
-        url(r'^__debug__/', include(debug_toolbar.urls)),
+        re_path(r"^__debug__/", include(debug_toolbar.urls)),
     ]
+
+urlpatterns += [
+    re_path(r"^api/", include(api_urls)),
+    re_path(r"", TemplateView.as_view(template_name="index.html")),
+]

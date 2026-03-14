@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Col, Row } from 'reactstrap';
+import { Row } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faExternalLinkSquareAlt } from '@fortawesome/free-solid-svg-icons';
 
@@ -13,15 +13,15 @@ export class RevisionList extends React.PureComponent {
       revisions,
       revisionCount,
       repo,
-      widthClass,
+      widthClass = '',
       children,
       bugSummaryMap,
-      commitShaClass,
-      commentFont,
+      commitShaClass = '',
+      commentFont = '',
     } = this.props;
 
     return (
-      <Col className={widthClass}>
+      <div className={widthClass}>
         {revisions.map((revision) => (
           <Revision
             revision={revision}
@@ -36,14 +36,22 @@ export class RevisionList extends React.PureComponent {
           <MoreRevisionsLink key="more" href={repo.getPushLogHref(revision)} />
         )}
         {children}
-      </Col>
+      </div>
     );
   }
 }
 
 RevisionList.propTypes = {
   revision: PropTypes.string.isRequired,
-  revisions: PropTypes.arrayOf(PropTypes.object).isRequired,
+  revisions: PropTypes.arrayOf(
+    PropTypes.shape({
+      author: PropTypes.string.isRequired,
+      comments: PropTypes.string.isRequired,
+      repository_id: PropTypes.number.isRequired,
+      result_set_id: PropTypes.number,
+      revision: PropTypes.string.isRequired,
+    }),
+  ).isRequired,
   revisionCount: PropTypes.number.isRequired,
   repo: PropTypes.shape({
     pushLogUrl: PropTypes.string,
@@ -53,18 +61,12 @@ RevisionList.propTypes = {
   commentFont: PropTypes.string,
 };
 
-RevisionList.defaultProps = {
-  widthClass: '',
-  commitShaClass: '',
-  commentFont: '',
-};
-
 export function MoreRevisionsLink(props) {
   return (
-    <Row className="ml-2">
+    <Row className="ms-2">
       <a href={props.href} target="_blank" rel="noopener noreferrer">
         {'\u2026and more'}
-        <FontAwesomeIcon icon={faExternalLinkSquareAlt} className="ml-1" />
+        <FontAwesomeIcon icon={faExternalLinkSquareAlt} className="ms-1" />
       </a>
     </Row>
   );

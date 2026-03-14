@@ -1,18 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import {
-  Button,
-  Col,
-  Form,
-  Input,
-  Label,
-  Modal,
-  ModalHeader,
-  ModalBody,
-  Row,
-  FormGroup,
-  Badge,
-} from 'reactstrap';
+import { Button, Col, Form, Modal, Row, Badge } from 'react-bootstrap';
 import flatMap from 'lodash/flatMap';
 
 import { createDropdowns } from '../../shared/FilterControls';
@@ -20,7 +8,13 @@ import InputFilter from '../../shared/InputFilter';
 import { processResponse } from '../../helpers/http';
 import PerfSeriesModel from '../../models/perfSeries';
 import { thPerformanceBranches } from '../../helpers/constants';
-import { containsText, getInitialData, getSeriesData } from '../helpers';
+import {
+  containsText,
+  getInitialData as getInitialDataFunc,
+  getSeriesData as getSeriesDataFunc,
+} from '../perf-helpers/helpers';
+
+import TimeRangeDropdown from './TimeRangeDropdown';
 
 export default class TestDataModal extends React.Component {
   constructor(props) {
@@ -47,35 +41,36 @@ export default class TestDataModal extends React.Component {
       selectedUnits: new Set(),
       activeTags: [],
       availableTags: [],
+      innerTimeRange: this.props.timeRange,
     };
   }
 
   async componentDidMount() {
     const {
       errorMessages,
-      repository_name: repositoryName,
       framework,
+      innerTimeRange,
+      repository_name: repositoryName,
     } = this.state;
-    const { timeRange, getInitialData } = this.props;
+    const { getInitialData = getInitialDataFunc } = this.props;
     const updates = await getInitialData(
       errorMessages,
       repositoryName,
       framework,
-      timeRange,
+      innerTimeRange,
     );
     this.setState(updates, this.processOptions);
   }
 
   componentDidUpdate(prevProps, prevState) {
-    const { platforms, platform, availableTags, activeTags } = this.state;
-    const { testData } = this.props;
+    const { activeTags, availableTags, platform, platforms } = this.state;
+    const { testData = [], timeRange } = this.props;
 
     if (prevState.platforms !== platforms) {
       const newPlatform = platforms.find((item) => item === platform)
         ? platform
         : platforms[0];
 
-      // eslint-disable-next-line react/no-did-update-set-state
       this.setState({ platform: newPlatform });
     }
 
@@ -83,12 +78,16 @@ export default class TestDataModal extends React.Component {
       const newActiveTags = activeTags.filter((tag) =>
         availableTags.includes(tag),
       );
-      // eslint-disable-next-line react/no-did-update-set-state
+
       this.setState({ activeTags: newActiveTags }, this.applyFilters);
     }
 
     if (this.props.options !== prevProps.options) {
       this.processOptions(true);
+    }
+
+    if (timeRange !== prevProps.timeRange) {
+      this.setState({ innerTimeRange: timeRange });
     }
 
     if (testData !== prevProps.testData) {
@@ -98,13 +97,13 @@ export default class TestDataModal extends React.Component {
 
   async getPlatforms() {
     const {
-      repository_name: repositoryName,
-      framework,
       errorMessages,
+      framework,
+      innerTimeRange,
+      repository_name: repositoryName,
     } = this.state;
-    const { timeRange } = this.props;
 
-    const params = { interval: timeRange.value, framework: framework.id };
+    const params = { interval: innerTimeRange.value, framework: framework.id };
     const response = await PerfSeriesModel.getPlatformList(
       repositoryName.name,
       params,
@@ -125,7 +124,7 @@ export default class TestDataModal extends React.Component {
   }
 
   addRelatedApplications = async (params) => {
-    const { relatedSeries: relatedSignature } = this.props.options;
+    const { relatedSeries: relatedSignature } = this.props.options ?? {};
     const { errorMessages } = this.state;
     let relatedTests = [];
 
@@ -168,7 +167,7 @@ export default class TestDataModal extends React.Component {
   };
 
   addRelatedConfigs = async (params) => {
-    const { relatedSeries } = this.props.options;
+    const { relatedSeries } = this.props.options ?? {};
     const { errorMessages, repository_name: repositoryName } = this.state;
 
     const response = await PerfSeriesModel.getSeriesList(
@@ -194,7 +193,7 @@ export default class TestDataModal extends React.Component {
   };
 
   addRelatedBranches = async (params, samePlatform = true) => {
-    const { relatedSeries } = this.props.options;
+    const { relatedSeries } = this.props.options ?? {};
     const { errorMessages } = this.state;
 
     const relatedProjects = thPerformanceBranches.filter(
@@ -204,7 +203,6 @@ export default class TestDataModal extends React.Component {
     const requests = relatedProjects.map((projectName) =>
       PerfSeriesModel.getSeriesList(projectName, params),
     );
-
     const responses = await Promise.all(requests);
     const relatedTests = responses
       // eslint-disable-next-line array-callback-return
@@ -215,11 +213,11 @@ export default class TestDataModal extends React.Component {
         errorMessages.push(item.data);
       })
       .filter(
-        (item) =>
-          item.name === relatedSeries.name &&
+        (responseSeries) =>
+          responseSeries.name.trim() === relatedSeries.name.trim() &&
           (samePlatform
-            ? item.platform === relatedSeries.platform
-            : item.platform !== relatedSeries.platform),
+            ? responseSeries.platform === relatedSeries.platform
+            : responseSeries.platform !== relatedSeries.platform),
       );
 
     this.setState({
@@ -231,19 +229,20 @@ export default class TestDataModal extends React.Component {
   };
 
   processOptions = async (relatedTestsMode = false) => {
-    const { option, relatedSeries } = this.props.options;
+    const { option, relatedSeries } = this.props.options ?? {};
     const {
-      platform,
+      errorMessages,
+      filterText,
       framework,
       includeSubtests,
-      errorMessages,
+      innerTimeRange,
+      platform,
       repository_name: repositoryName,
-      filterText,
     } = this.state;
-    const { timeRange, getSeriesData, testData } = this.props;
+    const { getSeriesData = getSeriesDataFunc, testData = [] } = this.props;
 
     const params = {
-      interval: timeRange.value,
+      interval: innerTimeRange.value,
       framework: framework.id,
       subtests: +includeSubtests,
     };
@@ -358,27 +357,39 @@ export default class TestDataModal extends React.Component {
         filteredData: [],
         showNoRelatedTests: false,
         filterText: '',
+        innerTimeRange: this.props.timeRange,
       },
       this.props.toggle,
     );
   };
 
   submitData = () => {
-    const { selectedTests } = this.state;
-    const { getTestData } = this.props;
+    const { selectedTests, innerTimeRange } = this.state;
+    const {
+      getTestData,
+      timeRange: parentTimeRange,
+      updateTestsAndTimeRange,
+      replicates,
+    } = this.props;
 
     const displayedTestParams = selectedTests.map((series) => ({
       repository_name: series.projectName,
       signature_id: parseInt(series.id, 10),
       framework_id: parseInt(series.frameworkId, 10),
+      replicates,
     }));
 
-    getTestData(displayedTestParams);
     this.setState({
       selectedTests: [],
       selectedUnits: new Set(),
       filterText: '',
     });
+
+    if (innerTimeRange.value !== parentTimeRange.value) {
+      updateTestsAndTimeRange(displayedTestParams, innerTimeRange);
+    } else {
+      getTestData(displayedTestParams);
+    }
     this.closeModal();
   };
 
@@ -424,23 +435,24 @@ export default class TestDataModal extends React.Component {
 
   render() {
     const {
-      platforms,
-      seriesData,
-      framework,
-      repository_name: repositoryName,
-      platform,
-      includeSubtests,
-      selectedTests,
-      filteredData,
-      relatedTests,
-      showNoRelatedTests,
-      filterText,
-      loading,
-      pinnedProjects,
       activeTags,
       availableTags,
+      filterText,
+      filteredData,
+      framework,
+      includeSubtests,
+      innerTimeRange,
+      loading,
+      pinnedProjects,
+      platform,
+      platforms,
+      relatedTests,
+      repository_name: repositoryName,
+      selectedTests,
+      seriesData,
+      showNoRelatedTests,
     } = this.state;
-    const { projects, frameworks, showModal } = this.props;
+    const { frameworks = [], projects, showModal } = this.props;
     const projectOptions = this.getDropdownOptions(projects);
     const modalOptions = [
       {
@@ -489,16 +501,35 @@ export default class TestDataModal extends React.Component {
     }
 
     return (
-      <Modal size="lg" isOpen={showModal}>
-        <ModalHeader toggle={this.closeModal}>Add Test Data</ModalHeader>
-        <ModalBody className="container-fluid test-chooser">
+      <Modal size="lg" show={showModal} onHide={this.closeModal}>
+        <Modal.Header closeButton>
+          <Modal.Title>Add Test Data</Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="container-fluid test-chooser">
           <Form>
             <Row className="justify-content-start">
               {createDropdowns(modalOptions, 'p-2', true)}
+              {innerTimeRange && (
+                <Col sm="auto" className="p-2">
+                  <TimeRangeDropdown
+                    timeRangeText={innerTimeRange.text}
+                    updateTimeRange={(newTimeRange) =>
+                      this.setState(
+                        { innerTimeRange: newTimeRange },
+                        this.getPlatforms,
+                      )
+                    }
+                  />
+                </Col>
+              )}
               <Col sm="auto" className="p-2">
                 <Button
-                  color="darker-info"
-                  outline
+                  variant="outline-secondary"
+                  className={
+                    includeSubtests
+                      ? 'bg-darker-info text-white'
+                      : 'text-darker-info'
+                  }
                   onClick={() =>
                     this.setState(
                       { includeSubtests: !includeSubtests },
@@ -524,11 +555,11 @@ export default class TestDataModal extends React.Component {
               <>
                 <Row className="justify-content-start">
                   <Col className="p-2">
-                    <FormGroup>
-                      <Label for="selectMultiTags">Tags</Label>
-                      <Input
+                    <Form.Group>
+                      <Form.Label htmlFor="selectMultiTags">Tags</Form.Label>
+                      <Form.Control
                         className="fa"
-                        type="select"
+                        as="select"
                         name="selectMultiTags"
                         id="selectMultiTags"
                         multiple
@@ -542,8 +573,8 @@ export default class TestDataModal extends React.Component {
                             {tag}
                           </option>
                         ))}
-                      </Input>
-                    </FormGroup>
+                      </Form.Control>
+                    </Form.Group>
                   </Col>
                 </Row>
                 <Row className="pb-2 justify-content-start">
@@ -553,7 +584,7 @@ export default class TestDataModal extends React.Component {
                         <Badge
                           id={`active-tag-${index}`}
                           data-testid={`active-tag ${tag}`}
-                          className="mr-2 btn btn-darker-secondary"
+                          className="me-2 btn btn-darker-secondary"
                           role="button"
                           title="Click to remove tag"
                           pill
@@ -569,13 +600,13 @@ export default class TestDataModal extends React.Component {
             )}
             <Row className="p-2 justify-content-start">
               <Col className="p-0">
-                <Label for="exampleSelect">
+                <Form.Label htmlFor="exampleSelect">
                   {relatedTests.length > 0 ? 'Related tests' : 'Tests'}
-                </Label>
-                <Input
+                </Form.Label>
+                <Form.Control
                   className="fa"
                   data-testid="tests"
-                  type="select"
+                  as="select"
                   name="selectMulti"
                   id="selectTests"
                   multiple
@@ -592,7 +623,7 @@ export default class TestDataModal extends React.Component {
                         {this.getOriginalTestName(test)}
                       </option>
                     ))}
-                </Input>
+                </Form.Control>
                 {showNoRelatedTests && (
                   <p className="text-info pt-2">No related tests found.</p>
                 )}
@@ -600,13 +631,13 @@ export default class TestDataModal extends React.Component {
             </Row>
             <Row className="p-2 justify-content-start">
               <Col className="p-0">
-                <Label for="exampleSelect">
+                <Form.Label htmlFor="exampleSelect">
                   Selected tests{' '}
                   <span className="small">(click a test to remove it)</span>
-                </Label>
-                <Input
+                </Form.Label>
+                <Form.Control
                   data-testid="selectedTests"
-                  type="select"
+                  as="select"
                   name="selectMulti"
                   id="selectTests"
                   multiple
@@ -622,7 +653,7 @@ export default class TestDataModal extends React.Component {
                         {this.getFullTestName(test)}
                       </option>
                     ))}
-                </Input>
+                </Form.Control>
                 {selectedTests.length > 6 && (
                   <p className="text-info pt-2">
                     Displaying more than 6 graphs at a time is not supported in
@@ -631,10 +662,10 @@ export default class TestDataModal extends React.Component {
                 )}
               </Col>
             </Row>
-            <Row className="p-2">
-              <Col className="py-2 px-0 text-right">
+            <Row className="p-2 justify-content-end">
+              <Col sm="auto" className="py-2 px-0">
                 <Button
-                  color="darker-info"
+                  variant="darker-info"
                   disabled={!selectedTests.length}
                   onClick={this.submitData}
                   onKeyPress={(event) => event.preventDefault()}
@@ -644,33 +675,26 @@ export default class TestDataModal extends React.Component {
               </Col>
             </Row>
           </Form>
-        </ModalBody>
+        </Modal.Body>
       </Modal>
     );
   }
 }
 
 TestDataModal.propTypes = {
-  projects: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
-  plottedUnits: PropTypes.instanceOf(Set).isRequired,
-  timeRange: PropTypes.shape({}).isRequired,
   getTestData: PropTypes.func.isRequired,
+  plottedUnits: PropTypes.instanceOf(Set).isRequired,
+  projects: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
+  showModal: PropTypes.bool.isRequired,
+  timeRange: PropTypes.shape({}).isRequired,
+  toggle: PropTypes.func.isRequired,
+  updateTestsAndTimeRange: PropTypes.func,
+  frameworks: PropTypes.arrayOf(PropTypes.shape({})),
+  getInitialData: PropTypes.func,
+  getSeriesData: PropTypes.func,
   options: PropTypes.shape({
     option: PropTypes.string,
     relatedSeries: PropTypes.shape({}),
   }),
   testData: PropTypes.arrayOf(PropTypes.shape({})),
-  frameworks: PropTypes.arrayOf(PropTypes.shape({})),
-  showModal: PropTypes.bool.isRequired,
-  toggle: PropTypes.func.isRequired,
-  getInitialData: PropTypes.func,
-  getSeriesData: PropTypes.func,
-};
-
-TestDataModal.defaultProps = {
-  options: undefined,
-  testData: [],
-  frameworks: [],
-  getInitialData,
-  getSeriesData,
 };

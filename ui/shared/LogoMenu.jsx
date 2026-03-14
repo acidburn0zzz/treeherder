@@ -1,30 +1,29 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import {
-  UncontrolledDropdown,
-  DropdownToggle,
-  DropdownMenu,
-  DropdownItem,
-} from 'reactstrap';
+import { Dropdown } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
 
 const choices = [
-  { url: '/', text: 'Treeherder' },
-  { url: '/perf.html', text: 'Perfherder' },
-  { url: '/intermittent-failures.html', text: 'Intermittent Failures View' },
-  { url: '/pushhealth.html', text: 'Push Health Usage' },
+  { url: '/jobs', text: 'Treeherder' },
+  { url: '/perfherder', text: 'Perfherder' },
+  { url: '/intermittent-failures', text: 'Intermittent Failures View' },
+  { url: '/push-health', text: 'Push Health' },
 ];
 
 export default class LogoMenu extends React.PureComponent {
   render() {
-    const { menuText, menuImage, colorClass } = this.props;
+    const {
+      menuText,
+      menuImage = null,
+      colorClass = 'text-white',
+    } = this.props;
 
     const menuChoices = choices.filter((choice) => choice.text !== menuText);
     return (
-      <UncontrolledDropdown>
-        <DropdownToggle
-          className="btn-view-nav"
+      <Dropdown>
+        <Dropdown.Toggle
+          className="btn-view-nav menu-items"
           id="th-logo"
-          caret
           title="Treeherder services"
         >
           {menuImage ? (
@@ -32,15 +31,15 @@ export default class LogoMenu extends React.PureComponent {
           ) : (
             <span className={colorClass}>{menuText}</span>
           )}
-        </DropdownToggle>
-        <DropdownMenu>
+        </Dropdown.Toggle>
+        <Dropdown.Menu>
           {menuChoices.map((choice) => (
-            <DropdownItem key={choice.text} tag="a" href={choice.url}>
+            <Dropdown.Item key={choice.text} as={Link} to={choice.url}>
               {choice.text}
-            </DropdownItem>
+            </Dropdown.Item>
           ))}
-        </DropdownMenu>
-      </UncontrolledDropdown>
+        </Dropdown.Menu>
+      </Dropdown>
     );
   }
 }
@@ -49,9 +48,4 @@ LogoMenu.propTypes = {
   menuText: PropTypes.string.isRequired,
   menuImage: PropTypes.string,
   colorClass: PropTypes.string,
-};
-
-LogoMenu.defaultProps = {
-  menuImage: null,
-  colorClass: 'text-white',
 };

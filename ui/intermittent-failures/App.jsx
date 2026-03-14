@@ -1,81 +1,67 @@
-import React from 'react';
-import { HashRouter, Route, Switch, Redirect } from 'react-router-dom';
-import { Container } from 'reactstrap';
-import { hot } from 'react-hot-loader/root';
+import { useState, useCallback } from 'react';
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { Container } from 'react-bootstrap';
 
 import ErrorMessages from '../shared/ErrorMessages';
 
 import MainView from './MainView';
 import BugDetailsView from './BugDetailsView';
 
-class App extends React.Component {
-  constructor(props) {
-    super(props);
+import '../css/react-table.css';
+import '../css/intermittent-failures.css';
+import '../css/treeherder-base.css';
 
-    // keep track of the mainviews graph and table data so the API won't be
-    // called again when navigating back from bugdetailsview.
-    this.state = {
-      graphData: null,
-      tableData: null,
-      user: {},
-      errorMessages: [],
-    };
-  }
+const IntermittentFailuresApp = () => {
+  // keep track of the mainviews graph and table data so the API won't be
+  // called again when navigating back from bugdetailsview.
+  const [graphData, setGraphData] = useState(null);
+  const [tableData, setTableData] = useState(null);
+  const [user, setUser] = useState({});
+  const [errorMessages, setErrorMessages] = useState([]);
 
-  updateAppState = (state) => {
-    this.setState(state);
-  };
+  const updateAppState = useCallback((state) => {
+    if (state.graphData !== undefined) setGraphData(state.graphData);
+    if (state.tableData !== undefined) setTableData(state.tableData);
+    if (state.user !== undefined) setUser(state.user);
+    if (state.errorMessages !== undefined)
+      setErrorMessages(state.errorMessages);
+  }, []);
 
-  render() {
-    const { user, graphData, tableData, errorMessages } = this.state;
-    return (
-      <HashRouter>
-        <main>
-          {errorMessages.length > 0 && (
-            <Container className="pt-5 max-width-default">
-              <ErrorMessages errorMessages={errorMessages} />
-            </Container>
-          )}
-          <Switch>
-            <Route
-              exact
-              path="/main"
-              render={(props) => (
-                <MainView
-                  {...props}
-                  mainGraphData={graphData}
-                  mainTableData={tableData}
-                  updateAppState={this.updateAppState}
-                  user={user}
-                  setUser={(user) => this.setState({ user })}
-                  notify={(message) =>
-                    this.setState({ errorMessages: [message] })
-                  }
-                />
-              )}
+  const notify = useCallback((message) => {
+    setErrorMessages([message]);
+  }, []);
+
+  return (
+    <main>
+      {errorMessages.length > 0 && (
+        <Container className="pt-5 max-width-default">
+          <ErrorMessages errorMessages={errorMessages} />
+        </Container>
+      )}
+      <Routes>
+        <Route
+          path="main"
+          element={
+            <MainView
+              mainGraphData={graphData}
+              mainTableData={tableData}
+              updateAppState={updateAppState}
+              user={user}
+              setUser={setUser}
+              notify={notify}
             />
-            <Route
-              path="/main?startday=:startday&endday=:endday&tree=:tree"
-              render={(props) => (
-                <MainView
-                  {...props}
-                  mainGraphData={graphData}
-                  mainTableData={tableData}
-                  updateAppState={this.updateAppState}
-                />
-              )}
-            />
-            <Route path="/bugdetails" component={BugDetailsView} />
-            <Route
-              path="/bugdetails?startday=:startday&endday=:endday&tree=:tree&bug=bug"
-              component={BugDetailsView}
-            />
-            <Redirect from="/" to="/main" />
-          </Switch>
-        </main>
-      </HashRouter>
-    );
-  }
-}
+          }
+        />
+        <Route
+          path="bugdetails"
+          element={
+            <BugDetailsView user={user} setUser={setUser} notify={notify} />
+          }
+        />
+        <Route path="/" element={<Navigate to="main" replace />} />
+      </Routes>
+    </main>
+  );
+};
 
-export default hot(App);
+export default IntermittentFailuresApp;

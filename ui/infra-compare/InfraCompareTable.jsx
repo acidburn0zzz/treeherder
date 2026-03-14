@@ -1,5 +1,5 @@
 import React from 'react';
-import { Table } from 'reactstrap';
+import { Table } from 'react-bootstrap';
 import PropTypes from 'prop-types';
 
 import { getJobsUrl } from '../helpers/url';
@@ -11,7 +11,7 @@ import { getHashBasedId } from './helpers';
 export default class InfraCompareTable extends React.PureComponent {
   render() {
     const {
-      data,
+      data = null,
       platform,
       validated: { originalProject, newProject, originalRevision, newRevision },
     } = this.props;
@@ -23,7 +23,7 @@ export default class InfraCompareTable extends React.PureComponent {
         sz="small"
         className="compare-table mb-0 px-0"
         key={platform}
-        innerRef={(el) => {
+        ref={(el) => {
           this.header = el;
         }}
       >
@@ -71,7 +71,13 @@ export default class InfraCompareTable extends React.PureComponent {
           </tr>
         </thead>
         {data.map((suiteResults) => (
-          <tbody>
+          <tbody
+            key={getHashBasedId(
+              suiteResults.suite,
+              hashFunction,
+              suiteResults.platform,
+            )}
+          >
             <InfraCompareTableRow
               hashkey={getHashBasedId(
                 suiteResults.suite,
@@ -90,8 +96,4 @@ export default class InfraCompareTable extends React.PureComponent {
 
 InfraCompareTable.propTypes = {
   data: PropTypes.arrayOf(PropTypes.shape({})),
-};
-
-InfraCompareTable.defaultProps = {
-  data: null,
 };

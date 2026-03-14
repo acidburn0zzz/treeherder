@@ -1,19 +1,18 @@
-import React from 'react';
-import PropTypes from 'prop-types';
-import { Badge, Button, FormGroup, Input } from 'reactstrap';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTimes } from '@fortawesome/free-solid-svg-icons';
 
-import { getFrameworkName } from '../helpers';
-import { graphColors } from '../constants';
+import PropTypes from 'prop-types';
+import { Badge, Button, Form, CloseButton } from 'react-bootstrap';
+
+import { getFrameworkName } from '../perf-helpers/helpers';
+import { graphColors } from '../perf-helpers/constants';
+import { Perfdocs } from '../perf-helpers/perfdocs';
 import GraphIcon from '../../shared/GraphIcon';
 
 const LegendCard = ({
   series,
-  testData,
+  testData = [],
   updateState,
   updateStateParams,
-  selectedDataPoint,
+  selectedDataPoint = null,
   frameworks,
   colors,
   symbols,
@@ -95,7 +94,7 @@ const LegendCard = ({
   };
 
   const removeTest = () => {
-    const index = testData.findIndex((test) => test === series);
+    const index = testData.indexOf(series);
     const newData = [...testData];
 
     if (index === -1) {
@@ -128,29 +127,27 @@ const LegendCard = ({
     }
   };
 
-  const subtitleStyle = 'p-0 mb-0 border-0 text-secondary text-left';
+  const subtitleStyle = 'p-0 mb-0 border-0 text-secondary text-start';
   const symbolType = series.symbol || ['circle', 'outline'];
 
+  const { suite, platform, framework_id: frameworkId } = series;
+  const framework = getFrameworkName(frameworks, frameworkId);
+  const perfdocs = new Perfdocs(framework, suite, platform);
+  const hasDocumentation = perfdocs.hasDocumentation();
   return (
-    <FormGroup check className="pl-0 border">
-      <Button
-        className="close mr-3 my-2 ml-2 bg-transparent"
+    <Form.Group className="ps-0 border position-relative">
+      <CloseButton
+        className="position-absolute top-0 end-0 m-2"
         onClick={removeTest}
-      >
-        <FontAwesomeIcon
-          className="pointer"
-          icon={faTimes}
-          size="xs"
-          title=""
-        />
-      </Button>
+        data-testid="remove-test-button"
+        aria-label="Remove test"
+      />
       <div className={`${series.color[0]} graph-legend-card p-3`}>
         <Button
-          color="link"
-          outline
+          variant="outline-link"
           className={`p-0 mb-0 pointer border-0 ${
             series.visible ? series.color[0] : 'text-muted'
-          } text-left`}
+          } text-start`}
           onClick={() => addTestData('addRelatedConfigs')}
           title="Add related configurations"
         >
@@ -159,12 +156,21 @@ const LegendCard = ({
             fill={symbolType[1] === 'fill' ? series.color[1] : '#ffffff'}
             stroke={series.color[1]}
           />
-
           {series.name}
         </Button>
+        <div className="small legend-docs">
+          {hasDocumentation && (
+            <a
+              href={perfdocs.documentationURL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              (docs)
+            </a>
+          )}
+        </div>
         <Button
-          color="link"
-          outline
+          variant="outline-link"
           className={`w-100  ${subtitleStyle}`}
           onClick={() => addTestData('addRelatedBranches')}
           title="Add related branches"
@@ -172,8 +178,7 @@ const LegendCard = ({
           {series.repository_name}
         </Button>
         <Button
-          color="link"
-          outline
+          variant="outline-link"
           className={`w-100  ${subtitleStyle}`}
           onClick={() => addTestData('addRelatedPlatform')}
           title="Add related platforms and branches"
@@ -182,8 +187,7 @@ const LegendCard = ({
         </Button>
         {series.application && (
           <Button
-            color="link"
-            outline
+            variant="outline-link"
             className={`w-100  ${subtitleStyle}`}
             title="Add related applications"
             onClick={() => addTestData('addRelatedApplications')}
@@ -191,10 +195,17 @@ const LegendCard = ({
             {series.application}
           </Button>
         )}
-        <Badge> {getFrameworkName(frameworks, series.framework_id)} </Badge>
+        <Badge> {framework} </Badge>
+        <div className="small">{`should_alert: ${
+          series.shouldAlert !== false
+        }`}</div>
+        <div className="small">{`alert_change_type: ${
+          series.alertChangeType === 1 ? 'absolute' : 'percentage'
+        }`}</div>
+        <div className="small">{`alert_threshold: ${series.alertThreshold}`}</div>
         <div className="small">{`${series.signatureHash.slice(0, 16)}...`}</div>
       </div>
-      <Input
+      <Form.Check
         className="show-hide-check"
         type="checkbox"
         checked={series.visible}
@@ -202,7 +213,7 @@ const LegendCard = ({
         title="Show/Hide series"
         onChange={updateSelectedTest}
       />
-    </FormGroup>
+    </Form.Group>
   );
 };
 
@@ -215,11 +226,6 @@ LegendCard.propTypes = {
   updateStateParams: PropTypes.func.isRequired,
   colors: PropTypes.arrayOf(PropTypes.arrayOf(PropTypes.string)).isRequired,
   selectedDataPoint: PropTypes.shape({}),
-};
-
-LegendCard.defaultProps = {
-  testData: [],
-  selectedDataPoint: null,
 };
 
 export default LegendCard;

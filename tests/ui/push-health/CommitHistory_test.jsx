@@ -1,4 +1,4 @@
-import React from 'react';
+
 import fetchMock from 'fetch-mock';
 import { render, cleanup, waitFor } from '@testing-library/react';
 
@@ -10,8 +10,8 @@ import { toDateStr } from '../../../ui/helpers/display';
 
 beforeEach(() => {
   fetchMock.get(
-    '/api/project/autoland/push/health_summary/?revision=eeb6fd68c0223a72d8714734a34d3e6da69995e1',
-    { needInvestigation: 87, unsupported: 8 },
+    '/api/project/autoland/push/health_summary/?revision=eeb6fd68c0223a72d8714734a34d3e6da69995e1&with_in_progress_tests=true',
+    [{ needInvestigation: 87, unsupported: 8 }],
   );
 });
 
@@ -31,7 +31,7 @@ describe('CommitHistory', () => {
     />
   );
 
-  test('should show the push header and the author', () => {
+  test('should show the push header and the author', async () => {
     const { details: commitHistory } = pushHealth.metrics.commitHistory;
     const { getByTestId } = render(testCommitHistory(commitHistory));
     const headerText = getByTestId('headerText');
@@ -45,6 +45,11 @@ describe('CommitHistory', () => {
     expect(authorTime).toHaveTextContent(
       toDateStr(commitHistory.currentPush.push_timestamp),
     );
+
+    // Wait for async state updates to complete
+    await waitFor(() => {
+      expect(getByTestId('headerText')).toBeInTheDocument();
+    });
   });
 
   test('should show a parent commit and health icon for that parent', async () => {
@@ -61,7 +66,9 @@ describe('CommitHistory', () => {
         queryByTestId('health-status-eeb6fd68c0223a72d8714734a34d3e6da69995e1'),
       ),
     ).toBeInTheDocument();
-    expect(await waitFor(() => getByText('87 items'))).toBeInTheDocument();
+    expect(
+      await waitFor(() => getByText('87 Push Health items')),
+    ).toBeInTheDocument();
   });
 
   test('should show warning if not exact commit match', async () => {
@@ -75,11 +82,16 @@ describe('CommitHistory', () => {
     const { getByText, getByTestId, queryByTestId } = render(
       testCommitHistory(commitHistory),
     );
-    expect(
-      getByText(
-        'Warning: Could not find an exact match parent Push in Treeherder.',
-      ),
-    ).toBeInTheDocument();
+
+    // Wait for component to render
+    await waitFor(() => {
+      expect(
+        getByText(
+          'Warning: Could not find an exact match parent Push in Treeherder.',
+        ),
+      ).toBeInTheDocument();
+    });
+
     expect(getByText('Closest match:')).toBeInTheDocument();
     const parentLink = getByTestId('parent-commit-sha');
 

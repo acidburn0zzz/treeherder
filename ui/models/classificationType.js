@@ -6,7 +6,8 @@ const classificationColors = {
   3: 'label-success', // fixed by backout",
   4: 'label-warning', // intermittent",
   5: 'label-default', // infra",
-  6: 'label-danger', // intermittent needs filing",
+  6: '', // new failure not classified",
+  8: 'label-danger', // intermittent needs bugid",
 };
 
 const uri = getApiUrl('/failureclassification/');

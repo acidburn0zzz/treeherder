@@ -18,8 +18,8 @@ def test_ingest_single_sample_job(
     assert Job.objects.count() == 1
     job = Job.objects.get(id=1)
     # Ensure we don't inadvertently change the way we generate job-related hashes.
-    assert job.option_collection_hash == '32faaecac742100f7753f0c1d0aa0add01b4046b'
-    assert job.signature.signature == '4dabe44cc898e585228c43ea21337a9b00f5ddf7'
+    assert job.option_collection_hash == "32faaecac742100f7753f0c1d0aa0add01b4046b"
+    assert job.signature.signature == "6202a0ad903a317ad2220d84ef19a676544b5d66"
 
 
 def test_ingest_all_sample_jobs(
@@ -39,13 +39,13 @@ def test_ingest_twice_log_parsing_status_changed(
     verify that nothing changes"""
     job_data = sample_data.job_data[:1]
 
-    job_data[0]['job']['state'] = 'running'
+    job_data[0]["job"]["state"] = "running"
     test_utils.do_job_ingestion(test_repository, job_data, sample_push)
     assert JobLog.objects.count() == 1
     for job_log in JobLog.objects.all():
         job_log.update_status(JobLog.FAILED)
 
-    job_data[0]['job']['state'] = 'completed'
+    job_data[0]["job"]["state"] = "completed"
     test_utils.do_job_ingestion(test_repository, job_data, sample_push)
     assert JobLog.objects.count() == 1
     for job_log in JobLog.objects.all():
@@ -65,23 +65,23 @@ def test_ingest_running_to_retry_sample_job(
     store_push_data(test_repository, sample_push)
 
     job_data = copy.deepcopy(sample_data.job_data[:1])
-    job = job_data[0]['job']
-    job_data[0]['revision'] = sample_push[0]['revision']
-    job['state'] = 'running'
-    job['result'] = 'unknown'
+    job = job_data[0]["job"]
+    job_data[0]["revision"] = sample_push[0]["revision"]
+    job["state"] = "running"
+    job["result"] = "unknown"
 
     def _simulate_retry_job(job):
-        job['state'] = 'completed'
-        job['result'] = 'retry'
+        job["state"] = "completed"
+        job["result"] = "retry"
         # convert the job_guid to what it would be on a retry
-        job['job_guid'] = job['job_guid'] + "_" + str(job['end_timestamp'])[-5:]
+        job["job_guid"] = job["job_guid"] + "_" + str(job["end_timestamp"])[-5:]
         return job
 
     if same_ingestion_cycle:
         # now we simulate the complete version of the job coming in (on the
         # same push)
         new_job_datum = copy.deepcopy(job_data[0])
-        new_job_datum['job'] = _simulate_retry_job(new_job_datum['job'])
+        new_job_datum["job"] = _simulate_retry_job(new_job_datum["job"])
         job_data.append(new_job_datum)
         store_job_data(test_repository, job_data)
     else:
@@ -95,9 +95,9 @@ def test_ingest_running_to_retry_sample_job(
 
     assert Job.objects.count() == 1
     job = Job.objects.get(id=1)
-    assert job.result == 'retry'
+    assert job.result == "retry"
     # guid should be the retry one
-    assert job.guid == job_data[-1]['job']['job_guid']
+    assert job.guid == job_data[-1]["job"]["job_guid"]
 
 
 @pytest.mark.parametrize(
@@ -115,29 +115,29 @@ def test_ingest_running_to_retry_to_success_sample_job(
     store_push_data(test_repository, sample_push)
 
     job_datum = copy.deepcopy(sample_data.job_data[0])
-    job_datum['revision'] = sample_push[0]['revision']
+    job_datum["revision"] = sample_push[0]["revision"]
 
-    job = job_datum['job']
-    job_guid_root = job['job_guid']
+    job = job_datum["job"]
+    job_guid_root = job["job_guid"]
 
     job_data = []
-    for (state, result, job_guid) in [
-        ('running', 'unknown', job_guid_root),
-        ('completed', 'retry', job_guid_root + "_" + str(job['end_timestamp'])[-5:]),
-        ('completed', 'success', job_guid_root),
+    for state, result, job_guid in [
+        ("running", "unknown", job_guid_root),
+        ("completed", "retry", job_guid_root + "_" + str(job["end_timestamp"])[-5:]),
+        ("completed", "success", job_guid_root),
     ]:
         new_job_datum = copy.deepcopy(job_datum)
-        new_job_datum['job']['state'] = state
-        new_job_datum['job']['result'] = result
-        new_job_datum['job']['job_guid'] = job_guid
+        new_job_datum["job"]["state"] = state
+        new_job_datum["job"]["result"] = result
+        new_job_datum["job"]["job_guid"] = job_guid
         job_data.append(new_job_datum)
 
-    for (i, j) in ingestion_cycles:
+    for i, j in ingestion_cycles:
         store_job_data(test_repository, job_data[i:j])
 
     assert Job.objects.count() == 2
-    assert Job.objects.get(id=1).result == 'retry'
-    assert Job.objects.get(id=2).result == 'success'
+    assert Job.objects.get(id=1).result == "retry"
+    assert Job.objects.get(id=2).result == "success"
     assert JobLog.objects.count() == 2
 
 
@@ -159,32 +159,32 @@ def test_ingest_running_to_retry_to_success_sample_job_multiple_retries(
     store_push_data(test_repository, sample_push)
 
     job_datum = copy.deepcopy(sample_data.job_data[0])
-    job_datum['revision'] = sample_push[0]['revision']
+    job_datum["revision"] = sample_push[0]["revision"]
 
-    job = job_datum['job']
-    job_guid_root = job['job_guid']
+    job = job_datum["job"]
+    job_guid_root = job["job_guid"]
 
     job_data = []
-    for (state, result, job_guid) in [
-        ('running', 'unknown', job_guid_root),
-        ('completed', 'retry', job_guid_root + "_" + str(job['end_timestamp'])[-5:]),
-        ('completed', 'retry', job_guid_root + "_12345"),
-        ('completed', 'success', job_guid_root),
+    for state, result, job_guid in [
+        ("running", "unknown", job_guid_root),
+        ("completed", "retry", job_guid_root + "_" + str(job["end_timestamp"])[-5:]),
+        ("completed", "retry", job_guid_root + "_12345"),
+        ("completed", "success", job_guid_root),
     ]:
         new_job_datum = copy.deepcopy(job_datum)
-        new_job_datum['job']['state'] = state
-        new_job_datum['job']['result'] = result
-        new_job_datum['job']['job_guid'] = job_guid
+        new_job_datum["job"]["state"] = state
+        new_job_datum["job"]["result"] = result
+        new_job_datum["job"]["job_guid"] = job_guid
         job_data.append(new_job_datum)
 
-    for (i, j) in ingestion_cycles:
+    for i, j in ingestion_cycles:
         ins = job_data[i:j]
         store_job_data(test_repository, ins)
 
     assert Job.objects.count() == 3
-    assert Job.objects.get(id=1).result == 'retry'
-    assert Job.objects.get(id=2).result == 'retry'
-    assert Job.objects.get(id=3).result == 'success'
+    assert Job.objects.get(id=1).result == "retry"
+    assert Job.objects.get(id=2).result == "retry"
+    assert Job.objects.get(id=3).result == "success"
     assert JobLog.objects.count() == 3
 
 
@@ -193,23 +193,23 @@ def test_ingest_retry_sample_job_no_running(
 ):
     """Process a single job structure in the job_data.txt file"""
     job_data = copy.deepcopy(sample_data.job_data[:1])
-    job = job_data[0]['job']
-    job_data[0]['revision'] = sample_push[0]['revision']
+    job = job_data[0]["job"]
+    job_data[0]["revision"] = sample_push[0]["revision"]
 
     store_push_data(test_repository, sample_push)
 
     # complete version of the job coming in
-    job['state'] = 'completed'
-    job['result'] = 'retry'
+    job["state"] = "completed"
+    job["result"] = "retry"
     # convert the job_guid to what it would be on a retry
-    retry_guid = job['job_guid'] + "_" + str(job['end_timestamp'])[-5:]
-    job['job_guid'] = retry_guid
+    retry_guid = job["job_guid"] + "_" + str(job["end_timestamp"])[-5:]
+    job["job_guid"] = retry_guid
 
     store_job_data(test_repository, job_data)
 
     assert Job.objects.count() == 1
     job = Job.objects.get(id=1)
-    assert job.result == 'retry'
+    assert job.result == "retry"
     assert job.guid == retry_guid
 
 
@@ -220,7 +220,7 @@ def test_bad_date_value_ingestion(
     Test ingesting a job blob with bad date value
 
     """
-    blob = job_data(start_timestamp="foo", revision=sample_push[0]['revision'])
+    blob = job_data(start_timestamp="foo", revision=sample_push[0]["revision"])
 
     store_push_data(test_repository, sample_push[:1])
     store_job_data(test_repository, [blob])
@@ -307,3 +307,132 @@ def test_ingest_job_with_updated_job_group(
 
     assert second_job.job_group.name == second_job_datum["job"]["group_name"]
     assert first_job.job_group.name == first_job_datum["job"]["group_name"]
+
+
+def test_unscheduled_task_full_lifecycle(
+    test_repository, failure_classifications, sample_data, sample_push, mock_log_parser
+):
+    """Test complete lifecycle: unscheduled -> pending -> running -> completed"""
+    job_datum = copy.deepcopy(sample_data.job_data[0])
+    job_guid = job_datum["job"]["job_guid"]
+    original_logs = job_datum["job"].get("logs", [])
+
+    # 1. Ingest as unscheduled
+    job_datum["job"]["state"] = "unscheduled"
+    job_datum["job"]["result"] = "unknown"
+    if "logs" in job_datum["job"]:
+        del job_datum["job"]["logs"]
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    assert Job.objects.count() == 1
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "unscheduled"
+    assert job.result == "unknown"
+
+    # 2. Transition to pending
+    job_datum["job"]["state"] = "pending"
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "pending"
+    assert job.result == "unknown"
+
+    # 3. Transition to running
+    job_datum["job"]["state"] = "running"
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "running"
+    assert job.result == "unknown"
+
+    # 4. Transition to completed
+    job_datum["job"]["state"] = "completed"
+    job_datum["job"]["result"] = "success"
+    if original_logs:
+        job_datum["job"]["logs"] = original_logs
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "completed"
+    assert job.result == "success"
+
+
+def test_unscheduled_task_out_of_order(
+    test_repository, failure_classifications, sample_data, sample_push, mock_log_parser
+):
+    """Test receiving pending before task-defined"""
+    job_datum = copy.deepcopy(sample_data.job_data[0])
+    job_guid = job_datum["job"]["job_guid"]
+
+    # 1. Ingest as pending first
+    job_datum["job"]["state"] = "pending"
+    job_datum["job"]["result"] = "unknown"
+    if "logs" in job_datum["job"]:
+        del job_datum["job"]["logs"]
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    assert Job.objects.count() == 1
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "pending"
+
+    # 2. Try to transition back to unscheduled (should be rejected)
+    job_datum["job"]["state"] = "unscheduled"
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "pending"  # Should stay pending
+
+
+def test_unscheduled_to_completed_direct(
+    test_repository, failure_classifications, sample_data, sample_push, mock_log_parser
+):
+    """Test task that completes without pending/running states"""
+    job_datum = copy.deepcopy(sample_data.job_data[0])
+    job_guid = job_datum["job"]["job_guid"]
+
+    # 1. Ingest as unscheduled
+    job_datum["job"]["state"] = "unscheduled"
+    job_datum["job"]["result"] = "unknown"
+    if "logs" in job_datum["job"]:
+        del job_datum["job"]["logs"]
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    assert Job.objects.count() == 1
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "unscheduled"
+
+    # 2. Jump directly to completed (valid for tasks that fail immediately)
+    job_datum["job"]["state"] = "completed"
+    job_datum["job"]["result"] = "exception"
+    job_datum["job"]["logs"] = []
+    test_utils.do_job_ingestion(test_repository, [job_datum], sample_push)
+
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "completed"
+    assert job.result == "exception"
+
+
+def test_unscheduled_ingestion_idempotent(
+    test_repository, failure_classifications, sample_data, sample_push, mock_log_parser
+):
+    """Test that ingesting the same unscheduled job twice doesn't create duplicates"""
+    job_data = copy.deepcopy(sample_data.job_data[:1])
+    job_guid = job_data[0]["job"]["job_guid"]
+
+    # Create unscheduled job
+    job_data[0]["job"]["state"] = "unscheduled"
+    job_data[0]["job"]["result"] = "unknown"
+    if "logs" in job_data[0]["job"]:
+        del job_data[0]["job"]["logs"]
+    test_utils.do_job_ingestion(test_repository, job_data, sample_push)
+
+    assert Job.objects.count() == 1
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "unscheduled"
+
+    # Ingest same unscheduled job again (should not create duplicate)
+    test_utils.do_job_ingestion(test_repository, job_data, sample_push)
+
+    assert Job.objects.count() == 1
+    job = Job.objects.get(guid=job_guid)
+    assert job.state == "unscheduled"

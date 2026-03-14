@@ -1,9 +1,8 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { connect } from 'react-redux';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faSpinner } from '@fortawesome/free-solid-svg-icons';
-import { Button } from 'reactstrap';
+import { Button } from 'react-bootstrap';
 
 import { thMaxPushFetchSize } from '../../../helpers/constants';
 import { toDateStr, toShortDateStr } from '../../../helpers/display';
@@ -11,7 +10,7 @@ import { addAggregateFields, getBtnClass } from '../../../helpers/job';
 import { getJobsUrl, textLogErrorsEndpoint } from '../../../helpers/url';
 import JobModel from '../../../models/job';
 import PushModel from '../../../models/push';
-import { notify } from '../../redux/stores/notifications';
+import { notify } from '../../stores/notificationStore';
 import { getProjectJobUrl } from '../../../helpers/location';
 import { getData } from '../../../helpers/http';
 
@@ -23,18 +22,11 @@ class SimilarJobsTab extends React.Component {
 
     this.state = {
       similarJobs: [],
-      filterBuildPlatformId: true,
-      filterOptionCollectionHash: true,
+      filterNoSuccessfulJobs: false,
       page: 1,
       selectedSimilarJob: null,
       hasNextPage: false,
       isLoading: true,
-    };
-
-    // map between state fields and job fields
-    this.filterMap = {
-      filterBuildPlatformId: 'build_platform_id',
-      filterOptionCollectionHash: 'option_collection_hash',
     };
   }
 
@@ -44,19 +36,16 @@ class SimilarJobsTab extends React.Component {
 
   getSimilarJobs = async () => {
     const { page, similarJobs, selectedSimilarJob } = this.state;
-    const { repoName, selectedJobFull, notify } = this.props;
+    const { repoName, selectedJobFull } = this.props;
     const options = {
       // get one extra to detect if there are more jobs that can be loaded (hasNextPage)
       count: this.pageSize + 1,
       offset: (page - 1) * this.pageSize,
     };
 
-    ['filterBuildPlatformId', 'filterOptionCollectionHash'].forEach((key) => {
-      if (this.state[key]) {
-        const field = this.filterMap[key];
-        options[field] = selectedJobFull[field];
-      }
-    });
+    if (this.state.filterNoSuccessfulJobs) {
+      options.nosuccess = '';
+    }
 
     const {
       data: newSimilarJobs,
@@ -157,8 +146,7 @@ class SimilarJobsTab extends React.Component {
       similarJobs,
       selectedSimilarJob,
       hasNextPage,
-      filterOptionCollectionHash,
-      filterBuildPlatformId,
+      filterNoSuccessfulJobs,
       isLoading,
     } = this.state;
     const selectedSimilarJobId = selectedSimilarJob
@@ -183,49 +171,57 @@ class SimilarJobsTab extends React.Component {
               </tr>
             </thead>
             <tbody>
-              {similarJobs.map((similarJob) => (
-                <tr
-                  key={similarJob.id}
-                  onClick={() => this.showJobInfo(similarJob)}
-                  className={
-                    selectedSimilarJobId === similarJob.id ? 'table-active' : ''
-                  }
-                >
-                  <td>
-                    <button
-                      className={`btn btn-similar-jobs btn-xs ${getBtnClass(
-                        similarJob.resultStatus,
-                        similarJob.failure_classification_id,
-                      )}`}
-                      type="button"
-                    >
-                      {similarJob.job_type_symbol}
-                      {similarJob.failure_classification_id > 1 && (
-                        <span>*</span>
-                      )}
-                    </button>
-                  </td>
-                  <td title={toDateStr(similarJob.result_set.push_timestamp)}>
-                    {toShortDateStr(similarJob.result_set.push_timestamp)}
-                  </td>
-                  <td>
-                    <a href={similarJob.authorResultsetFilterUrl}>
-                      {similarJob.result_set.author}
-                    </a>
-                  </td>
-                  <td>{similarJob.duration} min</td>
-                  <td>
-                    <a href={similarJob.revisionResultsetFilterUrl}>
-                      {similarJob.result_set.revisions[0].revision}
-                    </a>
-                  </td>
-                </tr>
-              ))}
+              {similarJobs.map((similarJob) => {
+                const { status, isClassified } = getBtnClass(
+                  similarJob.resultStatus,
+                  similarJob.failure_classification_id,
+                );
+                return (
+                  <tr
+                    key={similarJob.id}
+                    onClick={() => this.showJobInfo(similarJob)}
+                    className={
+                      selectedSimilarJobId === similarJob.id
+                        ? 'table-active'
+                        : ''
+                    }
+                  >
+                    <td>
+                      <button
+                        className="btn job-btn btn-xs"
+                        type="button"
+                        data-status={status}
+                        data-classified={isClassified ? 'true' : undefined}
+                      >
+                        {similarJob.job_type_symbol}
+                        {similarJob.failure_classification_id > 1 &&
+                          ![6, 8].includes(
+                            similarJob.failure_classification_id,
+                          ) && <span>*</span>}
+                      </button>
+                    </td>
+                    <td title={toDateStr(similarJob.result_set.push_timestamp)}>
+                      {toShortDateStr(similarJob.result_set.push_timestamp)}
+                    </td>
+                    <td>
+                      <a href={similarJob.authorResultsetFilterUrl}>
+                        {similarJob.result_set.author}
+                      </a>
+                    </td>
+                    <td>{similarJob.duration} min</td>
+                    <td>
+                      <a href={similarJob.revisionResultsetFilterUrl}>
+                        {similarJob.result_set.revisions[0].revision}
+                      </a>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           {hasNextPage && (
             <Button
-              outline
+              variant="outline-secondary"
               className="bg-light"
               type="button"
               onClick={this.showNext}
@@ -238,19 +234,11 @@ class SimilarJobsTab extends React.Component {
           <form className="form form-inline">
             <div className="checkbox">
               <input
-                onChange={() => this.toggleFilter('filterBuildPlatformId')}
+                onChange={() => this.toggleFilter('filterNoSuccessfulJobs')}
                 type="checkbox"
-                checked={filterBuildPlatformId}
+                checked={filterNoSuccessfulJobs}
               />
-              <small>Same platform</small>
-            </div>
-            <div className="checkbox">
-              <input
-                onChange={() => this.toggleFilter('filterOptionCollectionHash')}
-                type="checkbox"
-                checked={filterOptionCollectionHash}
-              />
-              <small>Same options</small>
+              <span className="fs-80">Exclude successful jobs</span>
             </div>
           </form>
           <div className="similar_job_detail">
@@ -305,7 +293,9 @@ class SimilarJobsTab extends React.Component {
                         <ul className="list-unstyled error_list">
                           {selectedSimilarJob.error_lines.map((error) => (
                             <li key={error.id}>
-                              <small title={error.line}>{error.line}</small>
+                              <span className="fs-80" title={error.line}>
+                                {error.line}
+                              </span>
                             </li>
                           ))}
                         </ul>
@@ -337,8 +327,7 @@ class SimilarJobsTab extends React.Component {
 SimilarJobsTab.propTypes = {
   repoName: PropTypes.string.isRequired,
   classificationMap: PropTypes.shape({}).isRequired,
-  notify: PropTypes.func.isRequired,
   selectedJobFull: PropTypes.shape({}).isRequired,
 };
 
-export default connect(null, { notify })(SimilarJobsTab);
+export default SimilarJobsTab;

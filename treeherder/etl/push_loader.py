@@ -7,7 +7,8 @@ from django.core.exceptions import ObjectDoesNotExist
 from treeherder.etl.common import to_timestamp
 from treeherder.etl.push import store_push_data
 from treeherder.model.models import Repository
-from treeherder.utils.github import fetch_json
+from treeherder.utils.github import compare_shas, get_pull_request
+from treeherder.utils.http import fetch_json
 
 env = environ.Env()
 logger = logging.getLogger(__name__)
@@ -19,15 +20,15 @@ class PushLoader:
     def process(self, message_body, exchange, root_url):
         transformer = self.get_transformer_class(exchange)(message_body)
         try:
-            newrelic.agent.add_custom_parameter("url", transformer.repo_url)
-            newrelic.agent.add_custom_parameter("branch", transformer.branch)
+            newrelic.agent.add_custom_attribute("url", transformer.repo_url)
+            newrelic.agent.add_custom_attribute("branch", transformer.branch)
             repos = Repository.objects
             if transformer.branch:
-                repos = repos.filter(branch__regex="(^|,)%s($|,)" % transformer.branch)
+                repos = repos.filter(branch__regex=f"(^|,){transformer.branch}($|,)")
             else:
                 repos = repos.filter(branch=None)
             repo = repos.get(url=transformer.repo_url, active_status="active")
-            newrelic.agent.add_custom_parameter("repository", repo.name)
+            newrelic.agent.add_custom_attribute("repository", repo.name)
         except ObjectDoesNotExist:
             repo_info = transformer.get_info()
             repo_info.update(
@@ -45,7 +46,7 @@ class PushLoader:
         transformed_data = transformer.transform(repo.name)
 
         logger.info(
-            "Storing push for %s %s %s", repo.name, transformer.repo_url, transformer.branch
+            f"Storing push for repository '{repo.name}' revision '{transformed_data['revision']}' branch '{transformer.branch}' url {transformer.repo_url}",
         )
         store_push_data(repo, [transformed_data])
 
@@ -57,16 +58,10 @@ class PushLoader:
                 return GithubPullRequestTransformer
         elif "/hgpushes/" in exchange:
             return HgPushTransformer
-        raise PulsePushError("Unsupported push exchange: {}".format(exchange))
+        raise PulsePushError(f"Unsupported push exchange: {exchange}")
 
 
 class GithubTransformer:
-
-    CREDENTIALS = {
-        "client_id": env("GITHUB_CLIENT_ID", default=None),
-        "client_secret": env("GITHUB_CLIENT_SECRET", default=None),
-    }
-
     def __init__(self, message_body):
         self.message_body = message_body
         self.repo_url = self.get_repo()
@@ -86,13 +81,8 @@ class GithubTransformer:
         )
         return info
 
-    def fetch_push(self, url, repository):
-        params = {}
-        params.update(self.CREDENTIALS)
-
-        logger.info("Fetching push details: %s", url)
-
-        commits = self.get_cleaned_commits(fetch_json(url, params))
+    def process_push(self, push_data):
+        commits = self.get_cleaned_commits(push_data)
         head_commit = commits[-1]
         push = {
             "revision": head_commit["sha"],
@@ -109,7 +99,7 @@ class GithubTransformer:
             revisions.append(
                 {
                     "comment": commit["commit"]["message"],
-                    "author": u"{} <{}>".format(
+                    "author": "{} <{}>".format(
                         commit["commit"]["author"]["name"], commit["commit"]["author"]["email"]
                     ),
                     "revision": commit["sha"],
@@ -159,8 +149,6 @@ class GithubPushTransformer(GithubTransformer):
     #     }
     # }
 
-    URL_BASE = "https://api.github.com/repos/{}/{}/compare/{}...{}"
-
     def get_branch(self):
         """
         Tag pushes don't use the actual branch, just the string "tag"
@@ -168,16 +156,19 @@ class GithubPushTransformer(GithubTransformer):
         if self.message_body["details"].get("event.head.tag"):
             return "tag"
 
-        return super(GithubPushTransformer, self).get_branch()
+        return super().get_branch()
 
     def transform(self, repository):
-        push_url = self.URL_BASE.format(
+        logger.warning(
+            f"Push data requested: organization {self.message_body['organization']} repository {self.message_body['repository']} base-sha {self.message_body['details']['event.base.sha']} head-sha {self.message_body['details']['event.head.sha']}"
+        )
+        push_data = compare_shas(
             self.message_body["organization"],
             self.message_body["repository"],
             self.message_body["details"]["event.base.sha"],
             self.message_body["details"]["event.head.sha"],
         )
-        return self.fetch_push(push_url, repository)
+        return self.process_push(push_data)
 
     def get_cleaned_commits(self, compare):
         return compare["commits"]
@@ -209,8 +200,6 @@ class GithubPullRequestTransformer(GithubTransformer):
     #     "version": 1
     # }
 
-    URL_BASE = "https://api.github.com/repos/{}/{}/pulls/{}/commits"
-
     def get_branch(self):
         """
         Pull requests don't use the actual branch, just the string "pull request"
@@ -221,13 +210,13 @@ class GithubPullRequestTransformer(GithubTransformer):
         return self.message_body["details"]["event.base.repo.url"].replace(".git", "")
 
     def transform(self, repository):
-        pr_url = self.URL_BASE.format(
+        pr_data = get_pull_request(
             self.message_body["organization"],
             self.message_body["repository"],
             self.message_body["details"]["event.pullNumber"],
         )
 
-        return self.fetch_push(pr_url, repository)
+        return self.process_push(pr_data)
 
 
 class HgPushTransformer:
@@ -271,16 +260,56 @@ class HgPushTransformer:
         return self.fetch_push(url, repository)
 
     def fetch_push(self, url, repository, sha=None):
-        newrelic.agent.add_custom_parameter("sha", sha)
+        newrelic.agent.add_custom_attribute("sha", sha)
 
         logger.debug("fetching for %s %s", repository, url)
         # there will only ever be one, with this url
-        push = list(fetch_json(url)["pushes"].values())[0]
+        try:
+            data = fetch_json(url)
+        except Exception as e:
+            logger.exception(f"Failed fetching push JSON from {url} for {repository}: {e}")
+            try:
+                newrelic.agent.record_custom_event(
+                    "hg_push_fetch_failure",
+                    {"url": url, "repository": repository, "error": str(e)},
+                )
+            except Exception:
+                # NewRelic failures should not block ingestion
+                logger.debug("NewRelic event failed for fetch error")
+            raise HgPushFetchError(f"Failed to fetch JSON from {url}: {e}") from e
+
+        pushes = None
+        if isinstance(data, dict):
+            pushes = data.get("pushes")
+
+        if not pushes or not isinstance(pushes, dict):
+            # Log data in warning and raise error
+            data_keys = list(data.keys()) if isinstance(data, dict) else None
+            logger.warning(
+                f"Malformed or empty push JSON from {url} for {repository}: data-keys={data_keys}"
+            )
+            try:
+                newrelic.agent.record_custom_event(
+                    "hg_push_fetch_malformed",
+                    {"url": url, "repository": repository, "data_keys": data_keys},
+                )
+            except Exception:
+                logger.debug("NewRelic event failed for malformed Hg push data")
+            raise HgPushFetchError(f"Malformed or empty 'pushes' for {url}")
+
+        # Safely get the first push
+        try:
+            push = next(iter(pushes.values()))
+        except Exception as e:
+            logger.exception(
+                f"Failed to extract first push from pushes for {repository} {url}: {e}"
+            )
+            raise HgPushFetchError(f"Unable to extract push from 'pushes' for {url}: {e}") from e
 
         commits = []
         # we only want to ingest the last 200 commits for each push,
         # to protect against the 5000+ commit merges on release day uplift.
-        for commit in push['changesets'][-200:]:
+        for commit in push["changesets"][-200:]:
             commits.append(
                 {
                     "revision": commit["node"],
@@ -298,4 +327,10 @@ class HgPushTransformer:
 
 
 class PulsePushError(ValueError):
+    pass
+
+
+class HgPushFetchError(Exception):
+    """Raised when fetching or parsing a push resultset fails."""
+
     pass

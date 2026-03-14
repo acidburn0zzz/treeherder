@@ -47,7 +47,7 @@ def test_weights():
     [
         ([0.0, 0.0], [1.0, 2.0], 3.0),
         ([0.0, 0.0], [0.0, 0.0], 0.0),
-        ([0.0, 0.0], [1.0, 1.0], float('inf')),
+        ([0.0, 0.0], [1.0, 1.0], float("inf")),
     ],
 )
 def test_calc_t(old_data, new_data, expected):
@@ -59,7 +59,7 @@ def test_detect_changes():
 
     times = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]
     values = [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1]
-    for (t, v) in zip(times, values):
+    for t, v in zip(times, values):
         data.append(RevisionDatum(t, t, [float(v)]))
 
     result = [
@@ -111,33 +111,33 @@ def test_detect_changes_few_revisions_many_values():
 @pytest.mark.parametrize(
     ("filename", "expected_timestamps"),
     [
-        ('runs1.json', [1365019665]),
-        ('runs2.json', [1357704596, 1358971894, 1365014104]),
-        ('runs3.json', [1335293827, 1338839958]),
-        ('runs4.json', [1364922838]),
-        ('runs5.json', []),
-        ('a11y.json', [1366197637, 1367799757]),
-        ('tp5rss.json', [1372846906, 1373413365, 1373424974]),
+        ("runs1.json", [1365019665]),
+        ("runs2.json", [1357704596, 1358971894, 1365014104]),
+        ("runs3.json", [1335293827, 1338839958]),
+        ("runs4.json", [1364922838]),
+        ("runs5.json", []),
+        ("a11y.json", [1366197637, 1367799757]),
+        ("tp5rss.json", [1372846906, 1373413365, 1373424974]),
     ],
 )
 def test_detect_changes_historical_data(filename, expected_timestamps):
     """Parse JSON produced by http://graphs.mozilla.org/api/test/runs"""
     # Configuration for Analyzer
-    FORE_WINDOW = 12
-    MIN_BACK_WINDOW = 12
-    MAX_BACK_WINDOW = 24
-    THRESHOLD = 7
+    fore_window = 12
+    min_back_window = 12
+    max_back_window = 24
+    threshold = 7
 
-    payload = SampleData.get_perf_data(os.path.join('graphs', filename))
-    runs = payload['test_runs']
+    payload = SampleData.get_perf_data(os.path.join("graphs", filename))
+    runs = payload["test_runs"]
     data = [RevisionDatum(r[2], r[2], [r[3]]) for r in runs]
 
     results = detect_changes(
         data,
-        min_back_window=MIN_BACK_WINDOW,
-        max_back_window=MAX_BACK_WINDOW,
-        fore_window=FORE_WINDOW,
-        t_threshold=THRESHOLD,
+        min_back_window=min_back_window,
+        max_back_window=max_back_window,
+        fore_window=fore_window,
+        t_threshold=threshold,
     )
     regression_timestamps = [d.push_timestamp for d in results if d.change_detected]
     assert regression_timestamps == expected_timestamps

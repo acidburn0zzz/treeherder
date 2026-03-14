@@ -1,6 +1,6 @@
 import logging
-import threading
 import socket
+import threading
 
 import environ
 import newrelic.agent
@@ -8,7 +8,11 @@ from django.conf import settings
 from kombu import Connection, Exchange, Queue
 from kombu.mixins import ConsumerMixin
 
-from treeherder.etl.tasks.pulse_tasks import store_pulse_pushes, store_pulse_tasks
+from treeherder.etl.tasks.pulse_tasks import (
+    store_pulse_pushes,
+    store_pulse_tasks,
+    store_pulse_tasks_classification,
+)
 from treeherder.utils.http import fetch_json
 
 from .exchange import get_exchange
@@ -22,6 +26,7 @@ logger = logging.getLogger(__name__)
 PULSE_GUARDIAN_URL = "https://pulseguardian.mozilla.org/"
 
 TASKCLUSTER_TASK_BINDINGS = [
+    "exchange/taskcluster-queue/v1/task-defined.#",
     "exchange/taskcluster-queue/v1/task-pending.#",
     "exchange/taskcluster-queue/v1/task-running.#",
     "exchange/taskcluster-queue/v1/task-completed.#",
@@ -38,6 +43,13 @@ HGMO_PUSH_BINDINGS = [
     "exchange/hgpushes/v1.#",
 ]
 
+MOZCI_CLASSIFICATION_PRODUCTION_BINDINGS = [
+    "exchange/taskcluster-queue/v1/task-completed.route.index.project.mozci.classification.#",
+]
+MOZCI_CLASSIFICATION_TESTING_BINDINGS = [
+    "exchange/taskcluster-queue/v1/task-completed.route.index.project.mozci.testing.classification.#",
+]
+
 
 class PulseConsumer(ConsumerMixin):
     """
@@ -45,16 +57,16 @@ class PulseConsumer(ConsumerMixin):
     """
 
     def __init__(self, source, build_routing_key):
-        self.connection = Connection(source['pulse_url'])
+        self.connection = Connection(source["pulse_url"], virtual_host=source.get("vhost", "/"))
         self.consumers = []
         self.queue = None
-        self.queue_name = "queue/{}/{}".format(self.connection.userid, self.queue_suffix)
-        self.root_url = source['root_url']
+        self.queue_name = f"queue/{self.connection.userid}/{self.queue_suffix}"
+        self.root_url = source["root_url"]
         self.source = source
         self.build_routing_key = build_routing_key
 
-    def get_consumers(self, Consumer, channel):
-        return [Consumer(**c) for c in self.consumers]
+    def get_consumers(self, consumer, channel):
+        return [consumer(**c) for c in self.consumers]
 
     def bindings(self):
         """Get the bindings for this consumer, each of the form `<exchange>.<routing_keys>`,
@@ -65,13 +77,13 @@ class PulseConsumer(ConsumerMixin):
         bindings = []
         for binding in self.bindings():
             # split source string into exchange and routing key sections
-            exchange, _, routing_keys = binding.partition('.')
+            exchange, _, routing_keys = binding.partition(".")
 
             # built an exchange object with our connection and exchange name
             exchange = get_exchange(self.connection, exchange)
 
             # split the routing keys up using the delimiter
-            for routing_key in routing_keys.split(':'):
+            for routing_key in routing_keys.split(":"):
                 if self.build_routing_key is not None:  # build routing key
                     routing_key = self.build_routing_key(routing_key)
 
@@ -99,7 +111,7 @@ class PulseConsumer(ConsumerMixin):
 
         # get the binding key for this consumer
         binding = self.get_binding_str(exchange.name, routing_key)
-        logger.info("Pulse queue {} bound to: {}".format(self.queue_name, binding))
+        logger.info(f"Pulse queue {self.queue_name} bound to: {binding}")
 
         return binding
 
@@ -116,9 +128,8 @@ class PulseConsumer(ConsumerMixin):
             bindings = self.get_bindings(self.queue_name)["bindings"]
         except Exception:
             logger.error(
-                "Unable to fetch existing bindings for %s. Data ingestion may proceed, "
+                f"Unable to fetch existing bindings for {self.queue_name}. Data ingestion may proceed, "
                 "but no bindings will be pruned",
-                self.queue_name,
             )
 
         # Now prune any bindings from the queue that were not
@@ -131,15 +142,15 @@ class PulseConsumer(ConsumerMixin):
 
                 if binding_str not in new_bindings:
                     self.unbind_from(Exchange(binding["source"]), binding["routing_key"])
-                    logger.info("Unbound from: %s", binding_str)
+                    logger.info(f"Unbound from: {binding_str}")
 
     def get_binding_str(self, exchange, routing_key):
         """Use consistent string format for binding comparisons"""
-        return "{} {}".format(exchange, routing_key)
+        return f"{exchange} {routing_key}"
 
     def get_bindings(self, queue_name):
         """Get list of bindings from the pulse API"""
-        return fetch_json("{}queue/{}/bindings".format(PULSE_GUARDIAN_URL, queue_name))
+        return fetch_json(f"{PULSE_GUARDIAN_URL}queue/{queue_name}/bindings")
 
 
 class TaskConsumer(PulseConsumer):
@@ -148,13 +159,41 @@ class TaskConsumer(PulseConsumer):
     def bindings(self):
         return TASKCLUSTER_TASK_BINDINGS
 
-    @newrelic.agent.background_task(name='pulse-listener-tasks.on_message', group='Pulse Listener')
+    @newrelic.agent.background_task(name="pulse-listener-tasks.on_message", group="Pulse Listener")
     def on_message(self, body, message):
-        exchange = message.delivery_info['exchange']
-        routing_key = message.delivery_info['routing_key']
-        logger.debug('received job message from %s#%s', exchange, routing_key)
+        exchange = message.delivery_info["exchange"]
+        routing_key = message.delivery_info["routing_key"]
+        logger.debug(f"received job message from {exchange}#{routing_key}")
         store_pulse_tasks.apply_async(
-            args=[body, exchange, routing_key, self.root_url], queue='store_pulse_tasks'
+            args=[body, exchange, routing_key, self.root_url], queue="store_pulse_tasks"
+        )
+        message.ack()
+
+
+class MozciClassificationConsumer(PulseConsumer):
+    queue_suffix = env("PULSE_MOZCI_CLASSIFICATION_QUEUE_NAME", default="tasksclassification")
+
+    def bindings(self):
+        mozci_env = env("PULSE_MOZCI_ENVIRONMENT", default="production")
+        if mozci_env == "testing":
+            return MOZCI_CLASSIFICATION_TESTING_BINDINGS
+
+        if mozci_env != "production":
+            logger.warning(
+                f"PULSE_MOZCI_ENVIRONMENT should be testing or production not {mozci_env}, defaulting to production"
+            )
+        return MOZCI_CLASSIFICATION_PRODUCTION_BINDINGS
+
+    @newrelic.agent.background_task(
+        name="pulse-listener-tasks-classification.on_message", group="Pulse Listener"
+    )
+    def on_message(self, body, message):
+        exchange = message.delivery_info["exchange"]
+        routing_key = message.delivery_info["routing_key"]
+        logger.debug(f"received mozci classification job message from {exchange}#{routing_key}")
+        store_pulse_tasks_classification.apply_async(
+            args=[body, exchange, routing_key, self.root_url],
+            queue="store_pulse_tasks_classification",
         )
         message.ack()
 
@@ -164,19 +203,19 @@ class PushConsumer(PulseConsumer):
 
     def bindings(self):
         rv = []
-        if self.source.get('hgmo'):
+        if self.source.get("hgmo"):
             rv += HGMO_PUSH_BINDINGS
-        if self.source.get('github'):
+        if self.source.get("github"):
             rv += GITHUB_PUSH_BINDINGS
         return rv
 
-    @newrelic.agent.background_task(name='pulse-listener-pushes.on_message', group='Pulse Listener')
+    @newrelic.agent.background_task(name="pulse-listener-pushes.on_message", group="Pulse Listener")
     def on_message(self, body, message):
-        exchange = message.delivery_info['exchange']
-        routing_key = message.delivery_info['routing_key']
-        logger.info('received push message from %s#%s', exchange, routing_key)
+        exchange = message.delivery_info["exchange"]
+        routing_key = message.delivery_info["routing_key"]
+        logger.info(f"received push message from {exchange}#{routing_key}")
         store_pulse_pushes.apply_async(
-            args=[body, exchange, routing_key, self.root_url], queue='store_pulse_pushes'
+            args=[body, exchange, routing_key, self.root_url], queue="store_pulse_pushes"
         )
         message.ack()
 
@@ -184,35 +223,50 @@ class PushConsumer(PulseConsumer):
 class JointConsumer(PulseConsumer):
     """
     Run a collection of consumers in parallel.  These may be connected to different
-    AMQP servers, and Kombu only supports communicating wiht one connection per
+    AMQP servers, and Kombu only supports communicating with one connection per
     thread, so we use multiple threads, one per consumer.
     """
 
-    queue_suffix = env("PULSE_QUEUE_NAME", default="queue_{}".format(socket.gethostname()))
+    queue_suffix = env("PULSE_QUEUE_NAME", default=f"queue_{socket.gethostname()}")
 
     def bindings(self):
-
         rv = []
-        if self.source.get('hgmo'):
+        if self.source.get("hgmo"):
             rv += HGMO_PUSH_BINDINGS
-        if self.source.get('github'):
+        if self.source.get("github"):
             rv += GITHUB_PUSH_BINDINGS
-        if self.source.get('tasks'):
+        if self.source.get("tasks"):
             rv += TASKCLUSTER_TASK_BINDINGS
+        if self.source.get("mozci-classification"):
+            mozci_env = env("PULSE_MOZCI_ENVIRONMENT", default="production")
+            if mozci_env == "testing":
+                rv += MOZCI_CLASSIFICATION_TESTING_BINDINGS
+            else:
+                if mozci_env != "production":
+                    logger.warning(
+                        f"PULSE_MOZCI_ENVIRONMENT should be testing or production not {mozci_env}, defaulting to production"
+                    )
+                rv += MOZCI_CLASSIFICATION_PRODUCTION_BINDINGS
+
         return rv
 
-    @newrelic.agent.background_task(name='pulse-joint-listener.on_message', group='Pulse Listener')
+    @newrelic.agent.background_task(name="pulse-joint-listener.on_message", group="Pulse Listener")
     def on_message(self, body, message):
-        exchange = message.delivery_info['exchange']
-        routing_key = message.delivery_info['routing_key']
-        logger.debug('received job message from %s#%s', exchange, routing_key)
-        if exchange.startswith('exchange/taskcluster-queue/v1/'):
+        exchange = message.delivery_info["exchange"]
+        routing_key = message.delivery_info["routing_key"]
+        logger.debug(f"received job message from {exchange}#{routing_key}")
+        if exchange.startswith("exchange/taskcluster-queue/v1/"):
             store_pulse_tasks.apply_async(
-                args=[body, exchange, routing_key, self.root_url], queue='store_pulse_tasks'
+                args=[body, exchange, routing_key, self.root_url], queue="store_pulse_tasks"
             )
+            if "task-completed" in exchange and ".proj-mozci." in routing_key:
+                store_pulse_tasks_classification.apply_async(
+                    args=[body, exchange, routing_key, self.root_url],
+                    queue="store_pulse_tasks_classification",
+                )
         else:
             store_pulse_pushes.apply_async(
-                args=[body, exchange, routing_key, self.root_url], queue='store_pulse_pushes'
+                args=[body, exchange, routing_key, self.root_url], queue="store_pulse_pushes"
             )
         message.ack()
 

@@ -1,71 +1,51 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { connect } from 'react-redux';
-import {
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { useSelector, useDispatch } from 'react-redux';
+import { Dropdown } from 'react-bootstrap';
+import { useNavigate } from 'react-router-dom';
 
-import { getUrlParam } from '../../helpers/location';
+import {
+  createQueryParams,
+  getPushHealthUrl,
+  getPerfCompareChooserUrl,
+  parseQueryParams,
+} from '../../helpers/url';
 import { formatTaskclusterError } from '../../helpers/errorMessage';
 import CustomJobActions from '../CustomJobActions';
 import PushModel from '../../models/push';
-import { getPushHealthUrl, getCompareChooserUrl } from '../../helpers/url';
-import { notify } from '../redux/stores/notifications';
-import { thEvents } from '../../helpers/constants';
+import { notify } from '../stores/notificationStore';
+import { updateRange } from '../redux/stores/pushes';
 
-// Trigger missing jobs is dangerous on repos other than these (see bug 1335506)
-const triggerMissingRepos = ['mozilla-inbound', 'autoland'];
+function PushActionMenu({
+  revision = null,
+  runnableVisible,
+  hideRunnableJobs,
+  showRunnableJobs,
+  showFuzzyJobs,
+  pushId,
+  currentRepo,
+}) {
+  const navigate = useNavigate();
+  const dispatch = useDispatch();
+  const [customJobActionsShowing, setCustomJobActionsShowing] = useState(false);
 
-class PushActionMenu extends React.PureComponent {
-  constructor(props) {
-    super(props);
+  // Redux state
+  const decisionTaskMap = useSelector((state) => state.pushes.decisionTaskMap);
 
-    const { revision } = this.props;
+  const updateParamsAndRange = useCallback(
+    (param) => {
+      let queryParams = parseQueryParams(window.location.search);
+      queryParams = { ...queryParams, ...{ [param]: revision } };
 
-    this.state = {
-      topOfRangeUrl: this.getRangeChangeUrl('tochange', revision),
-      bottomOfRangeUrl: this.getRangeChangeUrl('fromchange', revision),
-      customJobActionsShowing: false,
-    };
-  }
+      navigate({
+        search: createQueryParams(queryParams),
+      });
+      dispatch(updateRange(queryParams));
+    },
+    [revision, dispatch, navigate],
+  );
 
-  componentDidMount() {
-    window.addEventListener('hashchange', this.handleUrlChanges, false);
-    window.addEventListener(thEvents.filtersUpdated, this.handleUrlChanges);
-  }
-
-  componentWillUnmount() {
-    window.removeEventListener('hashchange', this.handleUrlChanges, false);
-    window.removeEventListener(thEvents.filtersUpdated, this.handleUrlChanges);
-  }
-
-  getRangeChangeUrl(param, revision) {
-    let url = window.location.href;
-    url = url.replace(`&${param}=${getUrlParam(param)}`, '');
-    url = url.replace(`&${'selectedJob'}=${getUrlParam('selectedJob')}`, '');
-    return `${url}&${param}=${revision}`;
-  }
-
-  handleUrlChanges = () => {
-    const { revision } = this.props;
-
-    this.setState({
-      topOfRangeUrl: this.getRangeChangeUrl('tochange', revision),
-      bottomOfRangeUrl: this.getRangeChangeUrl('fromchange', revision),
-    });
-  };
-
-  triggerMissingJobs = () => {
-    const {
-      notify,
-      revision,
-      pushId,
-      currentRepo,
-      decisionTaskMap,
-    } = this.props;
+  const triggerMissingJobs = useCallback(() => {
     const decisionTask = decisionTaskMap[pushId];
 
     if (
@@ -84,157 +64,129 @@ class PushActionMenu extends React.PureComponent {
     ).catch((e) => {
       notify(formatTaskclusterError(e), 'danger', { sticky: true });
     });
-  };
+  }, [pushId, revision, decisionTaskMap, currentRepo, dispatch]);
 
-  toggleCustomJobActions = () => {
-    const { customJobActionsShowing } = this.state;
+  const toggleCustomJobActions = useCallback(() => {
+    setCustomJobActionsShowing((prev) => !prev);
+  }, []);
 
-    this.setState({ customJobActionsShowing: !customJobActionsShowing });
-  };
-
-  render() {
-    const {
-      revision,
-      runnableVisible,
-      hideRunnableJobs,
-      showRunnableJobs,
-      showFuzzyJobs,
-      pushId,
-      currentRepo,
-    } = this.props;
-    const {
-      topOfRangeUrl,
-      bottomOfRangeUrl,
-      customJobActionsShowing,
-    } = this.state;
-
-    return (
-      <React.Fragment>
-        <UncontrolledDropdown className="btn-group">
-          <DropdownToggle
-            size="sm"
-            className="btn-push"
-            title="Action menu"
-            data-testid="push-action-menu-button"
-            caret
-          />
-          <DropdownMenu>
-            {runnableVisible ? (
-              <DropdownItem
-                tag="a"
-                title="Hide Runnable Jobs"
-                onClick={hideRunnableJobs}
-              >
-                Hide Runnable Jobs
-              </DropdownItem>
-            ) : (
-              <DropdownItem
-                tag="a"
-                title="Add new jobs to this push"
-                onClick={showRunnableJobs}
-              >
-                Add new jobs
-              </DropdownItem>
-            )}
-            <DropdownItem
+  return (
+    <React.Fragment>
+      <Dropdown className="btn-group">
+        <Dropdown.Toggle
+          size="sm"
+          className="btn-push"
+          title="Action menu"
+          data-testid="push-action-menu-button"
+        />
+        <Dropdown.Menu>
+          {runnableVisible ? (
+            <Dropdown.Item
               tag="a"
-              title="Add new jobs to this push via a fuzzy search"
-              onClick={showFuzzyJobs}
+              title="Hide Runnable Jobs"
+              onClick={hideRunnableJobs}
             >
-              Add new jobs (Search)
-            </DropdownItem>
-            {triggerMissingRepos.includes(currentRepo.name) && (
-              <DropdownItem
-                tag="a"
-                title="Trigger all jobs that were optimized away"
-                onClick={this.triggerMissingJobs}
-              >
-                Trigger missing jobs
-              </DropdownItem>
-            )}
-            <DropdownItem
+              Hide Runnable Jobs
+            </Dropdown.Item>
+          ) : (
+            <Dropdown.Item
               tag="a"
-              target="_blank"
-              rel="noopener noreferrer"
-              href={`https://bugherder.mozilla.org/?cset=${revision}&tree=${currentRepo.name}`}
-              title="Use Bugherder to mark the bugs in this push"
+              title="Add new jobs to this push"
+              onClick={showRunnableJobs}
             >
-              Mark with Bugherder
-            </DropdownItem>
-            <DropdownItem
-              tag="a"
-              onClick={this.toggleCustomJobActions}
-              title="View/Edit/Submit Action tasks for this push"
-            >
-              Custom Push Action...
-            </DropdownItem>
-            <DropdownItem
-              tag="a"
-              href={topOfRangeUrl}
-              data-testid="top-of-range-menu-item"
-            >
-              Set as top of range
-            </DropdownItem>
-            <DropdownItem
-              tag="a"
-              href={bottomOfRangeUrl}
-              data-testid="bottom-of-range-menu-item"
-            >
-              Set as bottom of range
-            </DropdownItem>
-            <DropdownItem divider />
-            <DropdownItem
-              tag="a"
-              href={getPushHealthUrl({ repo: currentRepo.name, revision })}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Enable Health Badges in the Health menu"
-            >
-              Push Health
-            </DropdownItem>
-            <DropdownItem
-              tag="a"
-              href={getCompareChooserUrl({
-                newProject: currentRepo.name,
-                newRevision: revision,
-              })}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Compare performance against another revision"
-            >
-              Compare Performance
-            </DropdownItem>
-          </DropdownMenu>
-        </UncontrolledDropdown>
-        {customJobActionsShowing && (
-          <CustomJobActions
-            job={null}
-            pushId={pushId}
-            currentRepo={currentRepo}
-            toggle={this.toggleCustomJobActions}
-          />
-        )}
-      </React.Fragment>
-    );
-  }
+              Add new jobs
+            </Dropdown.Item>
+          )}
+          <Dropdown.Item
+            tag="a"
+            title="Add new jobs to this push via a fuzzy search"
+            onClick={showFuzzyJobs}
+          >
+            Add new jobs (Search)
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            title="Trigger all jobs that were optimized away"
+            onClick={triggerMissingJobs}
+          >
+            Trigger missing jobs
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            target="_blank"
+            rel="noopener noreferrer"
+            href={`https://bugherder.mozilla.org/?cset=${revision}&tree=${currentRepo.name}`}
+            title="Use Bugherder to mark the bugs in this push"
+          >
+            Mark with Bugherder
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            onClick={toggleCustomJobActions}
+            title="View/Edit/Submit Action tasks for this push"
+          >
+            Custom Push Action...
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            onClick={() => updateParamsAndRange('tochange')}
+            data-testid="top-of-range-menu-item"
+          >
+            Set as top of range
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            onClick={() => updateParamsAndRange('fromchange')}
+            data-testid="bottom-of-range-menu-item"
+          >
+            Set as bottom of range
+          </Dropdown.Item>
+          <Dropdown.Divider />
+          <Dropdown.Item
+            tag="a"
+            href={getPushHealthUrl({ repo: currentRepo.name, revision })}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Enable Health Badges in the Health menu"
+          >
+            Push Health
+          </Dropdown.Item>
+          <Dropdown.Item
+            tag="a"
+            href={getPerfCompareChooserUrl({
+              newRepo: currentRepo.name,
+              newRev: revision,
+            })}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Compare performance against another revision"
+          >
+            Compare Performance
+          </Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown>
+      {customJobActionsShowing && (
+        <CustomJobActions
+          job={null}
+          pushId={pushId}
+          currentRepo={currentRepo}
+          toggle={toggleCustomJobActions}
+        />
+      )}
+    </React.Fragment>
+  );
 }
 
 PushActionMenu.propTypes = {
   runnableVisible: PropTypes.bool.isRequired,
-  revision: PropTypes.string.isRequired,
+  revision: PropTypes.string,
   currentRepo: PropTypes.shape({
     name: PropTypes.string,
   }).isRequired,
-  decisionTaskMap: PropTypes.shape({}).isRequired,
   pushId: PropTypes.number.isRequired,
   hideRunnableJobs: PropTypes.func.isRequired,
   showRunnableJobs: PropTypes.func.isRequired,
   showFuzzyJobs: PropTypes.func.isRequired,
-  notify: PropTypes.func.isRequired,
 };
 
-const mapStateToProps = ({ pushes: { decisionTaskMap } }) => ({
-  decisionTaskMap,
-});
-
-export default connect(mapStateToProps, { notify })(PushActionMenu);
+export default PushActionMenu;

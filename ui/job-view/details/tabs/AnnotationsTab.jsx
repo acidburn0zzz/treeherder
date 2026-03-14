@@ -1,7 +1,7 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 import { connect } from 'react-redux';
-import { Button } from 'reactstrap';
+import { Button } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faStar as faStarRegular } from '@fortawesome/free-regular-svg-icons';
 import {
@@ -12,30 +12,36 @@ import {
 import { thEvents } from '../../../helpers/constants';
 import { getBugUrl } from '../../../helpers/url';
 import { longDateFormat } from '../../../helpers/display';
-import { notify } from '../../redux/stores/notifications';
+import { notify } from '../../stores/notificationStore';
 import { recalculateUnclassifiedCounts } from '../../redux/stores/pushes';
 
 function RelatedBugSaved(props) {
   const { deleteBug, bug } = props;
-  const { bug_id: bugId } = bug;
 
   return (
-    <span className="btn-group pinboard-related-bugs-btn">
-      <a
-        className="btn btn-xs annotations-bug related-bugs-link"
-        href={getBugUrl(bugId)}
-        target="_blank"
-        rel="noopener noreferrer"
-        title={`View bug ${bugId}`}
-      >
-        <em>{bugId}</em>
-      </a>
+    <span className="pinboard-related-bugs-btn">
+      {!bug.bug_id && (
+        <span className="btn btn-xs">
+          <em>i{bug.bug_internal_id}</em>
+        </span>
+      )}
+      {bug.bug_id && (
+        <a
+          className="btn btn-xs annotations-bug "
+          href={getBugUrl(bug.bug_id)}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={`View bug ${bug.bug_id}`}
+        >
+          <em>{bug.bug_id}</em>
+        </a>
+      )}
       <Button
-        color="link"
+        variant="link"
         size="xs"
-        className="classification-delete-icon hover-warning pinned-job-close-btn annotations-bug"
+        className="classification-delete-icon hover-warning pinned-job-close-btn annotations-bug border-0"
         onClick={() => deleteBug(bug)}
-        title={`Delete relation to bug ${bugId}`}
+        title={`Delete relation to bug ${bug.bug_internal_id ?? bug.bug_id}`}
       >
         <FontAwesomeIcon icon={faTimesCircle} title="Delete" />
       </Button>
@@ -56,7 +62,7 @@ function RelatedBug(props) {
       <p className="annotations-bug-header font-weight-bold">Bugs</p>
       <ul className="annotations-bug-list">
         {bugs.map((bug) => (
-          <li key={bug.bug_id}>
+          <li key={bug.internal_id}>
             <RelatedBugSaved bug={bug} deleteBug={() => deleteBug(bug)} />
           </li>
         ))}
@@ -67,7 +73,7 @@ function RelatedBug(props) {
 
 RelatedBug.propTypes = {
   deleteBug: PropTypes.func.isRequired,
-  bugs: PropTypes.arrayOf(PropTypes.object).isRequired,
+  bugs: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
 };
 
 function TableRow(props) {
@@ -92,13 +98,13 @@ function TableRow(props) {
             icon={icon}
             title={failureId === 7 ? 'Auto classified' : 'Classified'}
           />
-          <span className="ml-1">{classificationName.name}</span>
+          <span className="ms-1">{classificationName.name}</span>
         </span>
       </td>
       <td>{text}</td>
       <td>
         <Button
-          color="link"
+          variant="link"
           onClick={deleteEvent}
           className="classification-delete-icon hover-warning pointable"
           title="Delete this classification"
@@ -145,7 +151,7 @@ function AnnotationsTable(props) {
 
 AnnotationsTable.propTypes = {
   deleteClassification: PropTypes.func.isRequired,
-  classifications: PropTypes.arrayOf(PropTypes.object).isRequired,
+  classifications: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   classificationMap: PropTypes.shape({}).isRequired,
 };
 
@@ -165,7 +171,7 @@ class AnnotationsTab extends React.Component {
   }
 
   onDeleteClassification = () => {
-    const { classifications, bugs, notify } = this.props;
+    const { classifications, bugs } = this.props;
 
     if (classifications.length) {
       this.deleteClassification(classifications[0]);
@@ -178,46 +184,51 @@ class AnnotationsTab extends React.Component {
     }
   };
 
-  deleteClassification = (classification) => {
-    const {
-      selectedJobFull,
-      recalculateUnclassifiedCounts,
-      notify,
-    } = this.props;
+  deleteClassification = async (classification) => {
+    const { selectedJobFull, recalculateUnclassifiedCounts } = this.props;
 
     selectedJobFull.failure_classification_id = 1;
     recalculateUnclassifiedCounts();
 
-    classification.destroy().then(
-      () => {
-        notify('Classification successfully deleted', 'success');
-        // also be sure the job object in question gets updated to the latest
-        // classification state (in case one was added or removed).
-        window.dispatchEvent(new CustomEvent(thEvents.classificationChanged));
-      },
-      () => {
-        notify('Classification deletion failed', 'danger', { sticky: true });
-      },
-    );
+    const { failureStatus } = await classification.destroy();
+
+    if (!failureStatus) {
+      notify('Classification successfully deleted', 'success');
+      // Dispatch applyNewJobs so Push components re-render the JobButton
+      const jobsByPush = { [selectedJobFull.push_id]: [selectedJobFull] };
+      window.dispatchEvent(
+        new CustomEvent(thEvents.applyNewJobs, {
+          detail: { jobs: jobsByPush },
+        }),
+      );
+      window.dispatchEvent(new CustomEvent(thEvents.classificationChanged));
+    } else {
+      notify('Classification deletion failed', 'danger', { sticky: true });
+    }
   };
 
-  deleteBug = (bug) => {
-    const { notify } = this.props;
+  deleteBug = async (bug) => {
+    const { failureStatus } = await bug.destroy();
 
-    bug.destroy().then(
-      () => {
-        notify(
-          `Association to bug ${bug.bug_id} successfully deleted`,
-          'success',
-        );
-        window.dispatchEvent(new CustomEvent(thEvents.classificationChanged));
-      },
-      () => {
-        notify(`Association to bug ${bug.bug_id} deletion failed`, 'danger', {
+    if (!failureStatus) {
+      notify(
+        `Association to bug ${
+          bug.bug_id ?? bug.bug_internal_id
+        } successfully deleted`,
+        'success',
+      );
+      window.dispatchEvent(new CustomEvent(thEvents.classificationChanged));
+    } else {
+      notify(
+        `Association to bug ${
+          bug.bug_id ?? bug.bug_internal_id
+        } deletion failed`,
+        'danger',
+        {
           sticky: true,
-        });
-      },
-    );
+        },
+      );
+    }
   };
 
   render() {
@@ -251,13 +262,10 @@ class AnnotationsTab extends React.Component {
 
 AnnotationsTab.propTypes = {
   classificationMap: PropTypes.shape({}).isRequired,
-  bugs: PropTypes.arrayOf(PropTypes.object).isRequired,
-  classifications: PropTypes.arrayOf(PropTypes.object).isRequired,
+  bugs: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
+  classifications: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   recalculateUnclassifiedCounts: PropTypes.func.isRequired,
-  notify: PropTypes.func.isRequired,
   selectedJobFull: PropTypes.shape({}).isRequired,
 };
 
-export default connect(null, { notify, recalculateUnclassifiedCounts })(
-  AnnotationsTab,
-);
+export default connect(null, { recalculateUnclassifiedCounts })(AnnotationsTab);

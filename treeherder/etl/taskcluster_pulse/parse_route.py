@@ -11,31 +11,31 @@
 #     Note: pushes on a branch on Github would not have a PR ID
 # Function extracted from
 # https://github.com/taskcluster/taskcluster/blob/32629c562f8d6f5a6b608a3141a8ee2e0984619f/services/treeherder/src/util/route_parser.js
-def parseRoute(route):
+def parse_route(route):
     id = None
     owner = None
-    parsedProject = None
-    parsedRoute = route.split('.')
-    project = parsedRoute[2]
-    if len(project.split('/')) == 2:
-        [owner, parsedProject] = project.split('/')
+    parsed_project = None
+    parsed_route = route.split(".")
+    project = parsed_route[2]
+    if len(project.split("/")) == 2:
+        [owner, parsed_project] = project.split("/")
     else:
-        parsedProject = project
+        parsed_project = project
 
-    if len(parsedRoute) == 5:
-        id = parsedRoute[4]
+    if len(parsed_route) == 5:
+        id = parsed_route[4]
 
-    pushInfo = {
-        "destination": parsedRoute[0],
+    push_info = {
+        "destination": parsed_route[0],
         "id": int(id) if id else 0,
-        "project": parsedProject,
-        "revision": parsedRoute[3],
+        "project": parsed_project,
+        "revision": parsed_route[3],
     }
 
-    if owner and parsedProject:
-        pushInfo["owner"] = owner
-        pushInfo["origin"] = 'github.com'
+    if owner and parsed_project:
+        push_info["owner"] = owner
+        push_info["origin"] = "github.com"
     else:
-        pushInfo["origin"] = 'hg.mozilla.org'
+        push_info["origin"] = "hg.mozilla.org"
 
-    return pushInfo
+    return push_info

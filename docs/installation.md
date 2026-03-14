@@ -28,8 +28,9 @@ From here on, linting checks will be executed every time you commit.
 
 To get started:
 
-- Install [Node.js] and [Yarn] (see [package.json] for known compatible versions, listed under `engines`).
-- Run `yarn install` to install all dependencies.
+- Install [Node.js] and [pnpm] (see [package.json] for known compatible versions, listed under `engines` and `packageManager`).
+- Run `pnpm install` to install all dependencies.
+- Run `pnpm build` to build necessary files.
 
 ### Running the standalone development server
 
@@ -39,7 +40,7 @@ production site. You do not need to set up the Docker environment unless making 
 - Start the development server by running:
 
   ```bash
-  yarn start
+  pnpm start
   ```
 
   <!-- prettier-ignore -->
@@ -53,7 +54,7 @@ production site. You do not need to set up the Docker environment unless making 
   To run the unminified UI with data from the staging site instead of the production site, type:
 
   ```bash
-  yarn start:stage
+  pnpm start:stage
   ```
 
 ## Server and Full-stack Development
@@ -67,6 +68,9 @@ To get started:
 
 ### Starting a local Treeherder instance
 
+By default, data will be ingested from autoland and try using a shared pulse account. However, if you want to use your own pulse account or change the repositories being ingested, you need to
+export those env variables in the shell first or inline with the command below. See [Pulse Ingestion Configuration](pulseload.md#pulse-ingestion-configuration) for more details.
+
 - Open a shell, cd into the root of the Treeherder repository, and type:
 
   ```bash
@@ -77,11 +81,8 @@ To get started:
 
 - Visit <http://localhost:5000> in your browser (NB: not port 8000).
 
-Both Django's runserver and webpack-dev-server will automatically refresh every time there's a change in the code.
-
-<!-- prettier-ignore -->
-!!! note
-    There will be no data to display until the ingestion tasks are run.
+Both Django's runserver and rspack-dev-server will automatically refresh every time there's a change in the code.
+Proceed to [Running the ingestion tasks](#running-the-ingestion-tasks) to get data.
 
 ### Using the minified UI
 
@@ -90,7 +91,7 @@ If you would like to use the minified production version of the UI with the deve
 - Run the build task:
 
   ```bash
-  docker-compose run frontend sh -c "yarn && yarn build"
+  docker-compose run frontend sh -c "corepack enable && pnpm install && pnpm build"
   ```
 
 - Start Treeherder's backend:
@@ -101,10 +102,12 @@ If you would like to use the minified production version of the UI with the deve
 
 - Visit <http://localhost:8000> (NB: port 8000, unlike above)
 
-Requests to port 8000 skip webpack-dev-server, causing Django's runserver to serve the
+Requests to port 8000 skip rspack-dev-server, causing Django's runserver to serve the
 production UI from `.build/` instead. In addition to being minified and using the
 non-debug versions of React, the assets are served with the same `Content-Security-Policy`
 header as production.
+
+Proceed to [Running the ingestion tasks](#running-the-ingestion-tasks) to get data.
 
 ### Running full stack with a custom DB setting
 
@@ -114,14 +117,14 @@ is what needs to be set. You can do this in a file in the root of `/treeherder` 
 `.env`:
 
 ```bash
-DATABASE_URL=mysql://user:password@hostname/treeherder
+DATABASE_URL=psql://user:password@hostname/treeherder
 ```
 
 Alternatively, you can `export` that value in your terminal prior to executing
 `docker-compose up` or just specify it on the command line as you execute:
 
 ```bash
-DATABASE_URL=mysql://user:password@hostname/treeherder docker-compose up
+DATABASE_URL=psql://user:password@hostname/treeherder SKIP_INGESTION=True docker-compose up
 ```
 
 <!-- prettier-ignore -->
@@ -131,31 +134,40 @@ DATABASE_URL=mysql://user:password@hostname/treeherder docker-compose up
     even if `DATABASE_URL` is set.  But it will use your system's resources unnecessarily.
     To skip data ingestion, set the var `SKIP_INGESTION=True`
 
-### Deleting the MySql database
+### Deleting the Postgres database
 
-The MySql database is kept locally and is not destroyed when the Docker containers are destroyed.
+The Postgres database is kept locally and is not destroyed when the Docker containers are destroyed.
 If you want to start from scratch type the following commands:
 
 ```bash
 docker-compose down
-docker volume rm treeherder_mysql_data
+docker volume rm treeherder_postgres_data
 ```
 
 ### Running the ingestion tasks
 
-Ingestion tasks populate the database with version control push logs, queued/running/completed jobs & output from log parsing, as well as maintain a cache of intermittent failure bugs. To run these:
+Celery tasks include storing of pushes, tasks and parsing logs (which provides failure lines and performance data) and generating alerts (for Perfherder). You can either run all the queues or run only specific queues.
 
-- Start up a celery worker to process async tasks:
+Open a new shell tab. To run all the queues type:
 
-  ```bash
-  docker-compose run backend celery -A treeherder worker --concurrency 1
-  ```
+```bash
+docker-compose run -e PROJECTS_TO_INGEST=autoland backend celery -A treeherder worker --concurrency 1
+```
 
-- Then in a new terminal window, run `docker-compose run backend bash`, and follow the steps from the [loading pulse data](pulseload.md) page.
+<!-- prettier-ignore -->
+!!! note
+    If you skip the `PROJECTS_TO_INGEST` flag, this command will store pushes and tasks from all repositories and will take a very long time for data to load. However, you can change it to ingest from other repositories if you wish.
+
+You can find a list of different celery queues in the the CELERY_TASK_QUEUES variable in the [settings] file. For instance, to
+only store tasks and pushes and omit log parsing:
+
+```bash
+docker-compose run -e PROJECTS_TO_INGEST=autoland backend celery -A treeherder worker -Q store_pulse_tasks,store_pulse_pushes --concurrency 1
+```
 
 ### Manual ingestion
 
-`NOTE`; You have to include `--root-url https://community-tc.services.mozilla.com` in order to ingest from the [Taskcluster Community instance](https://community-tc.services.mozilla.com), otherwise, it will default to the Firefox CI.
+`NOTE`: You have to include `--root-url https://community-tc.services.mozilla.com` in order to ingest from the [Taskcluster Community instance](https://community-tc.services.mozilla.com), otherwise, it will default to the Firefox CI.
 
 Open a terminal window and run `docker-compose up`. All following sections assume this step.
 
@@ -170,7 +182,7 @@ Ingest a single Mercurial push or the last N pushes:
 
 ```console
 docker-compose exec backend ./manage.py ingest push -p autoland -r 63f8a47cfdf5
-docker-compose exec backend ./manage.py ingest mozilla-central --last-n-pushes 100
+docker-compose exec backend ./manage.py ingest push -p mozilla-central --last-n-pushes 100
 ```
 
 Ingest a single Github push or the last 10:
@@ -211,8 +223,7 @@ Continue to **Working with the Server** section after looking at the [Code Style
 [a-team bootcamp]: https://ateam-bootcamp.readthedocs.io
 [git]: https://git-scm.com
 [treeherder repo]: https://github.com/mozilla/treeherder
-[jest]: https://jestjs.io/docs/en/tutorial-react
 [node.js]: https://nodejs.org/en/download/current/
-[yarn]: https://yarnpkg.com/en/docs/install
+[pnpm]: https://pnpm.io/installation
 [package.json]: https://github.com/mozilla/treeherder/blob/master/package.json
-[eslint]: https://eslint.org
+[settings]: https://github.com/mozilla/treeherder/blob/master/treeherder/config/settings.py#L318

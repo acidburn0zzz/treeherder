@@ -1,10 +1,11 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { Link } from 'react-router-dom';
 
-import { getTitle } from '../helpers';
+import { getTitle } from '../perf-helpers/helpers';
 import SimpleTooltip from '../../shared/SimpleTooltip';
 import { getData } from '../../helpers/http';
-import { endpoints } from '../constants';
+import { endpoints } from '../perf-helpers/constants';
 import { getApiUrl } from '../../helpers/url';
 
 export default class DownstreamSummary extends React.Component {
@@ -51,9 +52,14 @@ export default class DownstreamSummary extends React.Component {
           <SimpleTooltip
             text={
               <span>
-                <a href={`perf.html#/alerts?id=${id}`} className="text-info">
+                <Link
+                  to={`./alerts?id=${id}`}
+                  className="text-info"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
                   #{id}
-                </a>
+                </Link>
                 {position === 0 ? '' : ', '}
               </span>
             }

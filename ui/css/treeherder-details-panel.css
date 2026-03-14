@@ -5,19 +5,42 @@ strong {
 #details-panel {
   font-size: 12px;
   height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+#details-panel a:not(.btn-darker-secondary):not(.text-darker-secondary) {
+  color: #337ab7;
+}
+
+#details-panel a:visited:not(.btn-darker-secondary):not(.text-darker-secondary) {
+  color: purple;
+}
+
+/* Override link colors for actionbar-nav */
+#details-panel .actionbar-nav a:not(.btn-darker-secondary):not(.text-darker-secondary) {
+  color: #9fa3a5;
+}
+
+#details-panel .actionbar-nav a:visited:not(.btn-darker-secondary):not(.text-darker-secondary) {
+  color: #9fa3a5;
 }
 
 .details-panel-slide {
-  animation: details-panel-slide 0.4s;
+  animation: details-panel-slide 0.4s ease-out;
   height: 100%;
+  position: relative;
+  overflow: hidden;
 }
 
 @keyframes details-panel-slide {
   0% {
     transform: translateY(100%);
+    opacity: 0;
   }
   100% {
     transform: translateY(0%);
+    opacity: 1;
   }
 }
 
@@ -60,10 +83,32 @@ div#details-panel-content .details-panel-navbar > ul.tab-headers > li {
   flex-direction: row;
   z-index: 100;
   height: 33px;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .details-panel-navbar li {
   align-self: center;
+}
+
+.tab-headers-wrapper {
+  background-color: var(--darker-secondary-bg-color);
+  height: 33px;
+  line-height: 33px;
+  font-size: 13px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: visible;
+}
+
+.tab-headers {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
 }
 
 .tab-header-tabs {
@@ -78,13 +123,86 @@ div#details-panel-content .details-panel-navbar > ul.tab-headers > li {
   color: #9fa3a5;
 }
 
+/* Responsive tab overflow styles */
+.tab-overflow-toggle {
+  color: #9fa3a5;
+  font-size: 14px;
+  line-height: 30px;
+  padding: 4px 8px;
+}
+
+.tab-overflow-toggle:hover {
+  color: #d3d8da;
+  background-color: #1e252b;
+}
+
+.tab-overflow-menu {
+  background-color: #252c33;
+  border: 1px solid #42484f;
+  min-width: 100px;
+  margin-top: 0px;
+}
+
+.tab-overflow-menu .dropdown-item,
+.tab-overflow-menu .nav-link {
+  color: #9fa3a5;
+  background-color: transparent;
+  border: none;
+  font-size: 12px;
+  padding: 1em;
+}
+
+.tab-overflow-menu .dropdown-item:hover,
+.tab-overflow-menu .dropdown-item:focus,
+.tab-overflow-menu .nav-link:hover,
+.tab-overflow-menu .nav-link:focus {
+  background-color: #6b747b;
+  color: #d3d8da;
+}
+
+.tab-overflow-menu .dropdown-item.active,
+.tab-overflow-menu .nav-link.active {
+  background-color: #1a4666;
+  color: #eef0f2;
+}
+
+/* Custom dropdown toggle to remove caret */
+.custom-dropdown-toggle::after {
+  display: none;
+}
+
+.custom-dropdown-toggle {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.custom-dropdown-toggle:focus,
+.custom-dropdown-toggle:active {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+/* Ensure dropdown menu appears above everything */
+.tab-overflow-menu {
+  z-index: 2001;
+}
+
+/* Force dropdown to appear above all other elements */
+.dropdown-menu.show {
+  z-index: 2001;
+}
+
 #details-panel-content ul.tab-headers {
   list-style: none;
   flex-direction: row;
-  min-width: 550px;
+  min-width: 300px;
   display: flex;
   padding-left: 0;
   font-size: 12px;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .details-panel-close-btn {
@@ -99,14 +217,13 @@ div#details-panel-content .details-panel-navbar > ul.tab-headers > li {
 
 .perf-job-selected {
   /* An override to optimize all other non-perf jobs at 550px */
-  min-width: 646px !important;
+  min-width: 646px;
 }
 
 .details-panel-navbar .actionbar-nav > li > a,
 .details-panel-navbar .actionbar-nav > li > .btn {
   color: #9fa3a5;
   padding: 4px 15px;
-  margin-bottom: 4px;
   display: inline-block;
 }
 
@@ -119,7 +236,12 @@ div#details-panel-content .actionbar-nav > li > button:focus {
 }
 
 .details-panel-navbar .actionbar-nav {
-  flex: auto;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  overflow: hidden;
+  align-items: center;
 }
 
 .tab-header-tabs > li.selected-tab {
@@ -134,12 +256,12 @@ div#details-panel-content .actionbar-nav > li > button:focus {
 
 .react-tabs__tab-panel--selected {
   height: 100%;
-  margin: 0.5em 1em;
+  padding: 0.5em 1em;
   overflow-y: auto;
 }
 
 .react-tabs__tab--disabled {
-  font-style: italic !important;
+  font-style: italic;
 }
 
 #tabs-panel {
@@ -156,10 +278,10 @@ div#details-panel-content .actionbar-nav > li > button:focus {
 
 #details-panel-content {
   position: relative; /* So we can absolutely position the loading overlay */
-  height: 100%;
-  flex: auto;
+  flex: 1 1 auto;
   display: flex;
   flex-flow: row;
+  min-height: 0; /* Allow flex item to shrink below content size */
 }
 
 #actionbar {
@@ -178,6 +300,23 @@ div#details-panel-content .actionbar-nav > li > button:focus {
 
 .actionbar-nav-btn.disabled {
   cursor: not-allowed;
+}
+
+/* Override Bootstrap link colors for actionbar dropdown items */
+.dropdown-menu.actionbar-menu .dropdown-item,
+.dropdown-menu.actionbar-menu a.dropdown-item {
+  color: #212529;
+  background-color: #fff;
+  text-decoration: none;
+}
+
+.dropdown-menu.actionbar-menu .dropdown-item:hover,
+.dropdown-menu.actionbar-menu .dropdown-item:focus,
+.dropdown-menu.actionbar-menu a.dropdown-item:hover,
+.dropdown-menu.actionbar-menu a.dropdown-item:focus {
+  color: #1e2125;
+  background-color: #e9ecef;
+  text-decoration: none;
 }
 
 .action-bar-spin {
@@ -200,6 +339,13 @@ div#details-panel-content .actionbar-nav > li > button:focus {
 #summary-panel {
   width: 310px;
   min-width: 310px;
+  display: flex;
+  flex-direction: column;
+}
+
+#summary-panel-content {
+  flex: 1;
+  overflow: auto;
 }
 
 /*
@@ -339,7 +485,6 @@ annotations-tab {
  */
 
 .btn-similar-jobs {
-  background: #fff;
   cursor: default;
   font-size: 12px;
 }
@@ -385,6 +530,11 @@ div.similar-jobs .similar-job-list {
   flex: 1 1;
 }
 
+/* Override the default display:none on job-btn so similar job buttons are visible */
+div.similar-jobs .similar-job-list button.btn.job-btn {
+  display: inline-block;
+}
+
 div.similar-jobs .similar-job-list table {
   margin-bottom: 7px;
 }
@@ -415,10 +565,25 @@ div.similar-jobs .similar-job-list table tr {
  */
 
 div.performance-panel {
-  display: block !important;
+  display: block;
 }
 
 .performance-panel-actions > * {
   /* This is the same value as m-1 */
   margin: 0.25rem;
+}
+
+/**
+ * This rule is a bit ugly, but the button doesn't fit in the table row without
+ * resizing the vertical contents. In addition, there isn't a button size that
+ * matches the font size of the row.
+ */
+.performance-panel-view-button {
+  padding: 0px 6px;
+  margin: -3px 0;
+  display: inline-block;
+  font-size: 12px;
+  position: relative;
+  top: -1px;
+  line-height: 17px;
 }

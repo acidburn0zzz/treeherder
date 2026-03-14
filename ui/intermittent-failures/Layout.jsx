@@ -1,5 +1,5 @@
-import React from 'react';
-import { Container } from 'reactstrap';
+
+import { Container } from 'react-bootstrap';
 import PropTypes from 'prop-types';
 
 import ErrorBoundary from '../shared/ErrorBoundary';
@@ -12,20 +12,21 @@ import GraphsContainer from './GraphsContainer';
 
 const Layout = (props) => {
   const {
-    graphData,
-    tableData,
+    graphData = null,
+    tableData = null,
     errorMessages,
-    tree,
-    isFetchingTable,
-    isFetchingGraphs,
-    tableFailureStatus,
-    graphFailureStatus,
+    tree = null,
+    isFetchingTable = null,
+    isFetchingGraphs = null,
+    tableFailureStatus = null,
+    graphFailureStatus = null,
     updateState,
+    updateHash,
     graphOneData,
-    graphTwoData,
-    table,
+    graphTwoData = null,
+    table = null,
     datePicker,
-    header,
+    header = null,
   } = props;
 
   let failureMessage = null;
@@ -35,8 +36,13 @@ const Layout = (props) => {
     failureMessage = graphData;
   }
   return (
-    <Container fluid className="my-5 max-width-default">
-      <Navigation updateState={updateState} tree={tree} {...props} />
+    <Container fluid className="">
+      <Navigation
+        updateState={updateState}
+        updateHash={updateHash}
+        tree={tree}
+        {...props}
+      />
       {(isFetchingGraphs || isFetchingTable) &&
         !(
           tableFailureStatus ||
@@ -81,14 +87,9 @@ Container.propTypes = {
 };
 
 Layout.propTypes = {
-  history: PropTypes.shape({}).isRequired,
-  location: PropTypes.shape({
-    search: PropTypes.string,
-  }).isRequired,
   datePicker: PropTypes.element.isRequired,
   header: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.bool]),
   table: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.bool]),
-  graphOneData: PropTypes.arrayOf(PropTypes.shape({})),
   graphTwoData: PropTypes.arrayOf(PropTypes.shape({})),
   tableData: PropTypes.arrayOf(PropTypes.shape({})),
   graphData: PropTypes.oneOfType([
@@ -102,20 +103,6 @@ Layout.propTypes = {
   graphFailureStatus: PropTypes.number,
   isFetchingTable: PropTypes.bool,
   isFetchingGraphs: PropTypes.bool,
-};
-
-Layout.defaultProps = {
-  graphOneData: null,
-  graphTwoData: null,
-  tableFailureStatus: null,
-  graphFailureStatus: null,
-  isFetchingTable: null,
-  isFetchingGraphs: null,
-  tableData: null,
-  graphData: null,
-  tree: null,
-  table: null,
-  header: null,
 };
 
 export default Layout;

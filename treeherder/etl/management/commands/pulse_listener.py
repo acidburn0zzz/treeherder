@@ -26,15 +26,22 @@ class Command(BaseCommand):
             default=[
                 {
                     "root_url": "https://firefox-ci-tc.services.mozilla.com",
+                    "vhost": "/",
                     "github": True,
                     "hgmo": True,
                     "pulse_url": env("PULSE_URL"),
                     "tasks": True,
-                }
+                },
+                {
+                    "root_url": "https://community-tc.services.mozilla.com",
+                    "vhost": "communitytc",
+                    "mozci-classification": True,
+                    "pulse_url": env("PULSE_URL"),
+                },
             ],
         )
 
-        listener_params = (JointConsumer, pulse_sources, [lambda key: "#.{}".format(key), None])
+        listener_params = (JointConsumer, pulse_sources, [lambda key: f"#.{key}", None])
         consumer = prepare_joint_consumers(listener_params)
 
         try:

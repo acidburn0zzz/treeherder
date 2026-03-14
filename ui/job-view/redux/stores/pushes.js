@@ -3,21 +3,17 @@ import keyBy from 'lodash/keyBy';
 import max from 'lodash/max';
 
 import { parseQueryParams, bugzillaBugsApi } from '../../../helpers/url';
-import {
-  getAllUrlParams,
-  getQueryString,
-  getUrlParam,
-  replaceLocation,
-} from '../../../helpers/location';
+import { getUrlParam, replaceLocation } from '../../../helpers/location';
 import PushModel from '../../../models/push';
 import { getTaskRunStr, isUnclassifiedFailure } from '../../../helpers/job';
 import FilterModel from '../../../models/filter';
 import JobModel from '../../../models/job';
 import { thEvents } from '../../../helpers/constants';
 import { processErrors, getData } from '../../../helpers/http';
+import { updateUrlSearch } from '../../../helpers/router';
 
-import { notify } from './notifications';
-import { setSelectedJob, clearSelectedJob } from './selectedJob';
+import { notify } from '../../stores/notificationStore';
+import { clearJobViaUrl, setSelectedJob } from '../../stores/selectedJobStore';
 
 export const LOADING = 'LOADING';
 export const ADD_PUSHES = 'ADD_PUSHES';
@@ -97,7 +93,9 @@ const getLastModifiedJobTime = (jobMap) => {
  * ones that have been filtered out
  */
 const doRecalculateUnclassifiedCounts = (jobMap) => {
-  const filterModel = new FilterModel();
+  // Create a minimal navigate function for FilterModel
+  const navigate = ({ search }) => updateUrlSearch(search);
+  const filterModel = new FilterModel(navigate, window.location);
   const tiers = filterModel.urlParams.tier;
   let allUnclassifiedFailureCount = 0;
   let filteredUnclassifiedFailureCount = 0;
@@ -150,11 +148,11 @@ const addPushes = (
     const updatedLastRevision = newPushList[newPushList.length - 1].revision;
 
     if (setFromchange && getUrlParam('fromchange') !== updatedLastRevision) {
-      const params = getAllUrlParams();
+      const params = new URLSearchParams(window.location.search);
       params.set('fromchange', updatedLastRevision);
       replaceLocation(params);
-      // We are silently updating the url params, but we still want to
-      // update the ActiveFilters bar to this new change.
+      // We are silently updating the url params so we don't trigger an unnecessary update
+      // in componentDidUpdate, but we still want to update the ActiveFilters bar to this new change.
       window.dispatchEvent(new CustomEvent(thEvents.filtersUpdated));
     }
 
@@ -206,7 +204,7 @@ const fetchNewJobs = () => {
         }),
       );
       if (updatedSelectedJob) {
-        dispatch(setSelectedJob(updatedSelectedJob));
+        setSelectedJob(updatedSelectedJob);
       }
     } else {
       for (const error of errors) {
@@ -256,10 +254,16 @@ export const fetchPushes = (
 
     dispatch({ type: LOADING });
 
+    const locationSearch = parseQueryParams(window.location.search);
+
     // Only pass supported query string params to this endpoint.
     const options = {
-      ...pick(parseQueryParams(getQueryString()), PUSH_FETCH_KEYS),
+      ...pick(locationSearch, PUSH_FETCH_KEYS),
     };
+
+    if (locationSearch.landoCommitID) {
+      return dispatch({ type: ADD_PUSHES });
+    }
 
     if (oldestPushTimestamp) {
       // If we have an oldestTimestamp, then this isn't our first fetch,
@@ -287,7 +291,7 @@ export const fetchPushes = (
         ),
       });
     }
-    dispatch(notify('Error retrieving push data!', 'danger', { sticky: true }));
+    notify('Error retrieving push data!', 'danger', { sticky: true });
     return {};
   };
 };
@@ -299,14 +303,16 @@ export const pollPushes = () => {
     } = getState();
     // these params will be passed in each time we poll to remain
     // within the constraints of the URL params
-    const locationSearch = parseQueryParams(getQueryString());
+    const locationSearch = parseQueryParams(window.location.search);
     const pushPollingParams = PUSH_POLLING_KEYS.reduce(
       (acc, prop) =>
         locationSearch[prop] ? { ...acc, [prop]: locationSearch[prop] } : acc,
       {},
     );
 
-    if (pushList.length === 1 && locationSearch.revision) {
+    if (locationSearch.landoCommitID) {
+      dispatch({ type: ADD_PUSHES });
+    } else if (pushList.length === 1 && locationSearch.revision) {
       // If we are on a single revision, no need to poll for more pushes, but
       // we need to keep polling for jobs.
       dispatch(fetchNewJobs());
@@ -330,6 +336,7 @@ export const pollPushes = () => {
             pushList,
             jobMap,
             false,
+            dispatch,
           ),
         });
         dispatch(fetchNewJobs());
@@ -340,30 +347,6 @@ export const pollPushes = () => {
       }
     }
   };
-};
-
-/**
- * Get the next batch of pushes based on our current offset.
- */
-export const fetchNextPushes = (count) => {
-  const params = getAllUrlParams();
-
-  if (params.has('revision')) {
-    // We are viewing a single revision, but the user has asked for more.
-    // So we must replace the ``revision`` param with ``tochange``, which
-    // will make it just the top of the range.  We will also then get a new
-    // ``fromchange`` param after the fetch.
-    const revision = params.get('revision');
-    params.delete('revision');
-    params.set('tochange', revision);
-  } else if (params.has('startdate')) {
-    // We are fetching more pushes, so we don't want to limit ourselves by
-    // ``startdate``.  And after the fetch, ``startdate`` will be invalid,
-    // and will be replaced on the location bar by ``fromchange``.
-    params.delete('startdate');
-  }
-  replaceLocation(params);
-  return fetchPushes(count, true);
 };
 
 export const clearPushes = () => ({ type: CLEAR_PUSHES });
@@ -379,10 +362,17 @@ export const setPushes = (pushList, jobMap) => ({
   },
 });
 
-export const recalculateUnclassifiedCounts = (filterModel) => ({
-  type: RECALCULATE_UNCLASSIFIED_COUNTS,
-  filterModel,
-});
+export const recalculateUnclassifiedCounts = () => {
+  return (dispatch, getState) => {
+    const {
+      pushes: { jobMap },
+    } = getState();
+    return dispatch({
+      type: RECALCULATE_UNCLASSIFIED_COUNTS,
+      jobMap,
+    });
+  };
+};
 
 export const updateJobMap = (jobList) => ({
   type: UPDATE_JOB_MAP,
@@ -403,12 +393,15 @@ export const updateRange = (range) => {
     window.dispatchEvent(new CustomEvent(thEvents.clearPinboard));
     if (revisionPushList.length) {
       const { id: pushId } = revisionPushList[0];
-      const revisionJobMap = Object.entries(jobMap).reduce(
-        (acc, [id, job]) =>
-          job.push_id === pushId ? { ...acc, [id]: job } : acc,
-        {},
-      );
-      dispatch(clearSelectedJob(0));
+      const revisionJobMap = {};
+      for (const [id, job] of Object.entries(jobMap)) {
+        if (job.push_id === pushId) {
+          revisionJobMap[id] = job;
+        }
+      }
+      if (getUrlParam('selectedJob') || getUrlParam('selectedTaskRun')) {
+        clearJobViaUrl();
+      }
       // We already have the one revision they're looking for,
       // so we can just erase everything else.
       dispatch(setPushes(revisionPushList, revisionJobMap));
@@ -428,15 +421,16 @@ export const initialState = {
   decisionTaskMap: {},
   revisionTips: [],
   jobsLoaded: false,
-  loadingPushes: true,
+  loadingPushes: false,
   oldestPushTimestamp: null,
   allUnclassifiedFailureCount: 0,
   filteredUnclassifiedFailureCount: 0,
 };
 
 export const reducer = (state = initialState, action) => {
-  const { jobList, pushResults, setFromchange } = action;
+  const { jobList, pushResults, setFromchange, jobMap: actionJobMap } = action;
   const { pushList, jobMap, decisionTaskMap } = state;
+
   switch (action.type) {
     case LOADING:
       return { ...state, loadingPushes: true };
@@ -449,7 +443,10 @@ export const reducer = (state = initialState, action) => {
     case SET_PUSHES:
       return { ...state, loadingPushes: false, ...pushResults };
     case RECALCULATE_UNCLASSIFIED_COUNTS:
-      return { ...state, ...doRecalculateUnclassifiedCounts(jobMap) };
+      return {
+        ...state,
+        ...doRecalculateUnclassifiedCounts(actionJobMap || jobMap),
+      };
     case UPDATE_JOB_MAP:
       return {
         ...state,

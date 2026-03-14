@@ -4,13 +4,13 @@ from functools import wraps
 
 import jsonschema
 import newrelic.agent
-from celery import task
+from celery import shared_task
 from django.db.utils import IntegrityError, ProgrammingError
 
-from treeherder.etl.exceptions import MissingPushException
+from treeherder.etl.exceptions import MissingPushError
 
 
-class retryable_task:
+class retryable_task:  # noqa: N801
     """Wrapper around a celery task to add conditional task retrying."""
 
     NON_RETRYABLE_EXCEPTIONS = (
@@ -28,7 +28,7 @@ class retryable_task:
     # For these exceptions, we expect a certain amount of retries
     # but to report each one is just noise.  So don't raise to
     # New Relic until the retries have been exceeded.
-    HIDE_DURING_RETRIES = (MissingPushException,)
+    HIDE_DURING_RETRIES = (MissingPushError,)
 
     def __init__(self, *args, **kwargs):
         self.task_args = args
@@ -57,12 +57,12 @@ class retryable_task:
                     params = {
                         "number_of_prior_retries": number_of_prior_retries,
                     }
-                    newrelic.agent.record_exception(params=params)
+                    newrelic.agent.notice_error(attributes=params)
                 # Implement exponential backoff with some randomness to prevent
                 # thundering herd type problems. Constant factor chosen so we get
                 # reasonable pause between the fastest retries.
                 timeout = 10 * int(random.uniform(1.9, 2.1) ** number_of_prior_retries)
-                raise task_func.retry(exc=e, countdown=timeout)
+                raise task_func.retry(exc=e, countdown=timeout, throw=False)
 
-        task_func = task(*self.task_args, **self.task_kwargs)(inner)
+        task_func = shared_task(*self.task_args, **self.task_kwargs)(inner)
         return task_func

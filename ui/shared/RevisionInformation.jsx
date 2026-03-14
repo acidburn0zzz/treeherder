@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { ListGroup, ListGroupItem } from 'reactstrap';
+import { ListGroup } from 'react-bootstrap';
 
 import { getJobsUrl } from '../helpers/url';
 
@@ -40,38 +40,36 @@ function getRevisionSpecificDetails(
         truncatedRevision
       )}
       &nbsp;({project}) -&nbsp;
-      {resultSet && resultSet.author}
+      {resultSet?.author}
       {!resultSet && selectedTimeRange && selectedTimeRange.text}
       {getRevisionComments(resultSet)}
     </React.Fragment>
   );
 }
 
-export default function RevisionInformation(props) {
-  const {
-    originalProject,
-    originalRevision,
-    newProject,
-    newRevision,
-    originalResultSet,
-    newResultSet,
-    selectedTimeRange,
-  } = props;
-
+export default function RevisionInformation({
+  originalProject = '',
+  originalRevision = '',
+  newProject = '',
+  newRevision = '',
+  originalResultSet = {},
+  newResultSet = {},
+  selectedTimeRange = undefined,
+}) {
   return (
     <ListGroup className="push-information m-0 list-group">
       {originalRevision && (
-        <ListGroupItem className="d-inline border-0 p-0">
+        <ListGroup.Item className="d-inline border-0 p-0">
           {getRevisionSpecificDetails(
             originalRevision,
             originalProject,
             true,
             originalResultSet,
           )}
-        </ListGroupItem>
+        </ListGroup.Item>
       )}
       {selectedTimeRange && (
-        <ListGroupItem className="d-inline border-0 p-0">
+        <ListGroup.Item className="d-inline border-0 p-0">
           {getRevisionSpecificDetails(
             originalRevision,
             originalProject,
@@ -79,18 +77,18 @@ export default function RevisionInformation(props) {
             null,
             selectedTimeRange,
           )}
-        </ListGroupItem>
+        </ListGroup.Item>
       )}
       —
       {newRevision && (
-        <ListGroupItem className="d-inline border-0 p-0">
+        <ListGroup.Item className="d-inline border-0 p-0">
           {getRevisionSpecificDetails(
             newRevision,
             newProject,
             false,
             newResultSet,
           )}
-        </ListGroupItem>
+        </ListGroup.Item>
       )}
     </ListGroup>
   );
@@ -104,14 +102,4 @@ RevisionInformation.propTypes = {
   originalResultSet: PropTypes.shape({}),
   newResultSet: PropTypes.shape({}),
   selectedTimeRange: PropTypes.shape({}),
-};
-
-RevisionInformation.defaultProps = {
-  originalProject: '',
-  originalRevision: '',
-  originalResultSet: {},
-  newProject: '',
-  newRevision: '',
-  newResultSet: {},
-  selectedTimeRange: undefined,
 };

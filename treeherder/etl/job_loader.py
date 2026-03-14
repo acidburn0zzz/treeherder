@@ -4,12 +4,13 @@ import uuid
 import jsonschema
 import newrelic.agent
 import slugid
+from django.conf import settings
 
-from treeherder.etl.taskcluster_pulse.handler import ignore_task
 from treeherder.etl.common import to_timestamp
-from treeherder.etl.exceptions import MissingPushException
+from treeherder.etl.exceptions import MissingPushError
 from treeherder.etl.jobs import store_job_data
 from treeherder.etl.schema import get_json_schema
+from treeherder.etl.taskcluster_pulse.handler import ignore_task
 from treeherder.model.models import Push, Repository
 from treeherder.utils.taskcluster import get_task_definition
 
@@ -25,7 +26,7 @@ logger = logging.getLogger(__name__)
 # properly, when it's available:
 # https://bugzilla.mozilla.org/show_bug.cgi?id=1323110#c7
 def task_and_retry_ids(job_guid):
-    (decoded_task_id, retry_id) = job_guid.split('/')
+    (decoded_task_id, retry_id) = job_guid.split("/")
     # As of slugid v2, slugid.encode() returns a string not bytestring under Python 3.
     real_task_id = slugid.encode(uuid.UUID(decoded_task_id))
     return (real_task_id, retry_id)
@@ -38,6 +39,7 @@ class JobLoader:
         "success": "success",
         "fail": "testfailed",
         "exception": "exception",
+        "retry": "retry",
         "canceled": "usercancel",
         "superseded": "superseded",
         "unknown": "unknown",
@@ -46,6 +48,7 @@ class JobLoader:
         "success": "success",
         "fail": "busted",
         "exception": "exception",
+        "retry": "retry",
         "canceled": "usercancel",
         "superseded": "superseded",
         "unknown": "unknown",
@@ -58,28 +61,34 @@ class JobLoader:
     PLATFORM_FIELD_MAP = {"build_platform": "buildMachine", "machine_platform": "runMachine"}
 
     def process_job(self, pulse_job, root_url):
-        if self._is_valid_job(pulse_job):
+        with settings.STATSD_CLIENT.timer("process_job_validate"):
+            is_valid = self._is_valid_job(pulse_job)
+        if is_valid:
             try:
-                project = pulse_job["origin"]["project"]
-                newrelic.agent.add_custom_parameter("project", project)
+                with settings.STATSD_CLIENT.timer("process_job_transform"):
+                    project = pulse_job["origin"]["project"]
+                    newrelic.agent.add_custom_attribute("project", project)
 
-                repository = Repository.objects.get(name=project)
-                if repository.active_status != 'active':
-                    (real_task_id, _) = task_and_retry_ids(pulse_job["taskId"])
-                    logger.debug(
-                        "Task %s belongs to a repository that is not active.", real_task_id
-                    )
-                    return
+                    repository = Repository.objects.get(name=project)
+                    if repository.active_status != "active":
+                        (real_task_id, _) = task_and_retry_ids(pulse_job["taskId"])
+                        logger.debug(
+                            "Task %s belongs to a repository that is not active.", real_task_id
+                        )
+                        return
 
-                if pulse_job["state"] != "unscheduled":
+                    transformed_job = None
                     try:
                         self.validate_revision(repository, pulse_job)
                         transformed_job = self.transform(pulse_job)
+                    except AttributeError:
+                        logger.warning("Skipping job due to bad attribute", exc_info=1)
+
+                if transformed_job:
+                    with settings.STATSD_CLIENT.timer("process_job_store"):
                         store_job_data(repository, [transformed_job])
                         # Returning the transformed_job is only for testing purposes
                         return transformed_job
-                    except AttributeError:
-                        logger.warning("Skipping job due to bad attribute", exc_info=1)
             except Repository.DoesNotExist:
                 logger.info("Job with unsupported project: %s", project)
 
@@ -90,13 +99,13 @@ class JobLoader:
         # check the revision for this job has an existing push
         # If it doesn't, then except out so that the celery task will
         # retry till it DOES exist.
-        revision_field = 'revision__startswith' if len(revision) < 40 else 'revision'
-        filter_kwargs = {'repository': repository, revision_field: revision}
+        revision_field = "revision__startswith" if len(revision) < 40 else "revision"
+        filter_kwargs = {"repository": repository, revision_field: revision}
 
-        if revision_field == 'revision__startswith':
+        if revision_field == "revision__startswith":
             newrelic.agent.record_custom_event(
-                'short_revision_job_loader',
-                {'error': 'Revision <40 chars', 'revision': revision, 'job': pulse_job},
+                "short_revision_job_loader",
+                {"error": "Revision <40 chars", "revision": revision, "job": pulse_job},
             )
 
         if not Push.objects.filter(**filter_kwargs).exists():
@@ -106,7 +115,7 @@ class JobLoader:
             task = get_task_definition(repository.tc_root_url, real_task_id)
             # We do this to prevent raising an exception for a task that will never be ingested
             if not ignore_task(task, real_task_id, repository.tc_root_url, project):
-                raise MissingPushException(
+                raise MissingPushError(
                     "No push found in {} for revision {} for task {}".format(
                         pulse_job["origin"]["project"], revision, real_task_id
                     )
@@ -140,6 +149,7 @@ class JobLoader:
                 "machine": self._get_machine(pulse_job),
                 "option_collection": self._get_option_collection(pulse_job),
                 "log_references": self._get_log_references(pulse_job),
+                "perfherder_data_references": self._get_perfherder_data_references(pulse_job),
             },
             "superseded": pulse_job.get("coalesced", []),
             "revision": pulse_job["origin"]["revision"],
@@ -180,6 +190,25 @@ class JobLoader:
         log_references.extend(self._get_errorsummary_log_references(job))
         return log_references
 
+    def _get_perfherder_data_references(self, job):
+        performance_data_references = []
+        for artifact in job.get("jobInfo", {}).get("links", []):
+            artifact_link = artifact.get("url")
+            if (
+                artifact_link
+                and "perfherder-data" in artifact_link
+                and artifact_link.endswith(".json")
+            ):
+                performance_data_references.append(
+                    {
+                        "name": artifact.get("linkText"),
+                        "url": artifact_link,
+                        "parse_status": "pending",
+                    }
+                )
+
+        return performance_data_references
+
     def _get_errorsummary_log_references(self, job):
         log_references = []
         try:
@@ -195,7 +224,7 @@ class JobLoader:
         return log_references
 
     def _get_option_collection(self, job):
-        option_collection = {"opt": True}
+        option_collection = {}
         if "labels" in job:
             option_collection = {}
             for option in job["labels"]:
@@ -243,6 +272,13 @@ class JobLoader:
                 pulse_job["owner"] = pulse_job["owner"][0:49]
             jsonschema.validate(pulse_job, get_json_schema("pulse-job.yml"))
         except (jsonschema.ValidationError, jsonschema.SchemaError) as e:
-            logger.error("JSON Schema validation error during job ingestion: %s", e)
+            if "taskId" in pulse_job:
+                (real_task_id, run_id) = task_and_retry_ids(pulse_job["taskId"])
+            else:
+                real_task_id = "unknown"
+                run_id = "unknown"
+            logger.error(
+                f"JSON Schema validation error during job ingestion for task {real_task_id}, run {run_id}: {e}"
+            )
             return False
         return True

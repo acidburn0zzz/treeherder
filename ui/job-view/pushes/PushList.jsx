@@ -1,212 +1,266 @@
-import React from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import PropTypes from 'prop-types';
-import { Button } from 'reactstrap';
+import { Button } from 'react-bootstrap';
 import { connect } from 'react-redux';
+import { useLocation } from 'react-router-dom';
 import intersection from 'lodash/intersection';
 import isEqual from 'lodash/isEqual';
 
 import ErrorBoundary from '../../shared/ErrorBoundary';
-import { notify } from '../redux/stores/notifications';
+import { notify } from '../stores/notificationStore';
 import {
-  clearSelectedJob,
-  setSelectedJobFromQueryString,
-} from '../redux/stores/selectedJob';
-import {
-  fetchPushes,
-  fetchNextPushes,
-  updateRange,
-  pollPushes,
-} from '../redux/stores/pushes';
-import { reloadOnChangeParameters } from '../../helpers/filter';
+  syncSelectionFromUrl,
+  clearJobViaUrl,
+  wasJobJustSelected,
+} from '../stores/selectedJobStore';
+import { fetchPushes, updateRange, pollPushes } from '../redux/stores/pushes';
+import { updatePushParams } from '../../helpers/location';
 
 import Push from './Push';
 import PushLoadErrors from './PushLoadErrors';
 
 const PUSH_POLL_INTERVAL = 60000;
 
-class PushList extends React.Component {
-  constructor(props) {
-    super(props);
+/**
+ * URL-FIRST ARCHITECTURE
+ *
+ * Job selection uses the URL as the single source of truth.
+ * This component syncs the Redux state from the URL whenever the URL changes.
+ *
+ * Flow:
+ * 1. User clicks job → PushJobs calls selectJobViaUrl() → URL updates
+ * 2. URL change triggers useEffect below → calls syncSelectionFromUrl()
+ * 3. syncSelectionFromUrl reads URL and updates Redux state + visual selection
+ *
+ * This eliminates race conditions because there's only one path for selection.
+ */
 
-    this.state = {
-      notificationSupported: 'Notification' in window,
-    };
-  }
+function PushList({
+  repoName,
+  filterModel,
+  pushList,
+  fetchPushes,
+  pollPushes,
+  updateRange,
+  loadingPushes,
+  jobsLoaded,
+  duplicateJobsVisible,
+  groupCountsExpanded,
+  allUnclassifiedFailureCount,
+  getAllShownJobs,
+  jobMap,
+  revision = null,
+  landoCommitID = null,
+  landoStatus = 'unknown',
+  currentRepo = {},
+  pushHealthVisibility,
+}) {
+  const location = useLocation();
+  const [notificationSupported] = useState('Notification' in window);
+  const pushIntervalId = useRef(null);
+  const prevRouterSearch = useRef(location.search);
+  const prevJobsLoaded = useRef(jobsLoaded);
 
-  componentDidMount() {
-    const { fetchPushes } = this.props;
-
-    window.addEventListener('hashchange', this.handleUrlChanges, false);
-    fetchPushes();
-    this.poll();
-  }
-
-  componentDidUpdate(prevProps) {
-    const {
-      notify,
-      jobMap,
-      jobsLoaded,
-      setSelectedJobFromQueryString,
-    } = this.props;
-
-    if (jobsLoaded && jobsLoaded !== prevProps.jobsLoaded) {
-      setSelectedJobFromQueryString(notify, jobMap);
-    }
-  }
-
-  componentWillUnmount() {
-    if (this.pushIntervalId) {
-      clearInterval(this.pushIntervalId);
-      this.pushIntervalId = null;
-    }
-    window.addEventListener('hashchange', this.handleUrlChanges, false);
-  }
-
-  setWindowTitle() {
-    const { allUnclassifiedFailureCount, repoName } = this.props;
-
-    document.title = `[${allUnclassifiedFailureCount}] ${repoName}`;
-  }
-
-  getUrlRangeValues = (url) => {
-    const params = [...new URLSearchParams(url.split('?')[1]).entries()];
+  const getUrlRangeValues = useCallback((search) => {
+    const params = [...new URLSearchParams(search)];
 
     return params.reduce((acc, [key, value]) => {
-      return reloadOnChangeParameters.includes(key)
+      return [
+        'repo',
+        'startdate',
+        'enddate',
+        'nojobs',
+        'revision',
+        'author',
+      ].includes(key)
         ? { ...acc, [key]: value }
         : acc;
     }, {});
-  };
+  }, []);
 
-  poll = () => {
-    const { pollPushes } = this.props;
+  const handleUrlChanges = useCallback(
+    (prevSearch) => {
+      const oldRange = getUrlRangeValues(prevSearch);
+      const newRange = getUrlRangeValues(location.search);
 
-    this.pushIntervalId = setInterval(async () => {
+      if (!isEqual(oldRange, newRange)) {
+        updateRange(newRange);
+      }
+    },
+    [location.search, updateRange, getUrlRangeValues],
+  );
+
+  const poll = useCallback(() => {
+    pushIntervalId.current = setInterval(async () => {
       pollPushes();
     }, PUSH_POLL_INTERVAL);
-  };
+  }, [pollPushes]);
 
-  handleUrlChanges = (evt) => {
-    const { updateRange } = this.props;
-    const { oldURL, newURL } = evt;
-    const oldRange = this.getUrlRangeValues(oldURL);
-    const newRange = this.getUrlRangeValues(newURL);
+  const clearIfEligibleTarget = useCallback(
+    (target) => {
+      // Target must be within the "push" area, but not be a dropdown-item,
+      // button/btn, or job element.
+      // This will exclude the JobDetails, navbars, and job buttons.
+      const globalContent = document.getElementById('th-global-content');
+      const isEligible =
+        globalContent.contains(target) &&
+        target.tagName !== 'A' &&
+        target.closest('button') === null &&
+        target.closest('[data-job-id]') === null &&
+        !intersection(target.classList, ['btn', 'dropdown-item']).length;
 
-    if (!isEqual(oldRange, newRange)) {
-      updateRange(newRange);
+      if (isEligible) {
+        // Don't clear if a job was just selected (within the last ~100ms).
+        // This prevents a race condition where clicking a job triggers:
+        // 1. mousedown -> job selected -> React re-renders button
+        // 2. click event fires with target as a parent element (e.g., <tbody>)
+        //    because the DOM changed between mousedown and mouseup
+        // 3. clearIfEligibleTarget incorrectly clears the just-selected job
+        if (wasJobJustSelected()) {
+          return;
+        }
+        // Use URL-first pattern: just update URL, let sync effect handle the rest
+        clearJobViaUrl();
+      }
+    },
+    [clearJobViaUrl],
+  );
+
+  const fetchNextPushes = useCallback(
+    (count) => {
+      const params = updatePushParams(location);
+      window.history.pushState(null, null, params);
+      fetchPushes(count, true);
+    },
+    [fetchPushes, location],
+  );
+
+  const setWindowTitle = useCallback(() => {
+    document.title = `[${allUnclassifiedFailureCount}] ${repoName}`;
+  }, [allUnclassifiedFailureCount, repoName]);
+
+  // componentDidMount - start polling
+  useEffect(() => {
+    poll();
+
+    return () => {
+      if (pushIntervalId.current) {
+        clearInterval(pushIntervalId.current);
+        pushIntervalId.current = null;
+      }
+    };
+  }, [poll]);
+
+  // Sync selection from URL when jobs first load
+  useEffect(() => {
+    if (jobsLoaded && jobsLoaded !== prevJobsLoaded.current) {
+      // Jobs just finished loading - sync selection from URL
+      syncSelectionFromUrl(jobMap, notify);
     }
-  };
+    prevJobsLoaded.current = jobsLoaded;
+  }, [jobsLoaded, syncSelectionFromUrl, notify, jobMap]);
 
-  clearIfEligibleTarget(target) {
-    // Target must be within the "push" area, but not be a dropdown-item or
-    // a button/btn.
-    // This will exclude the JobDetails and navbars.
-    const globalContent = document.getElementById('th-global-content');
-    const { clearSelectedJob, pinnedJobs } = this.props;
-    const countPinnedJobs = Object.keys(pinnedJobs).length;
-    const isEligible =
-      globalContent.contains(target) &&
-      target.tagName !== 'A' &&
-      target.closest('button') === null &&
-      !intersection(target.classList, ['btn', 'dropdown-item']).length;
+  // URL-FIRST: Sync selection from URL whenever URL changes
+  // This is the SINGLE place where selection state is updated from URL.
+  // All selection changes (clicks, keyboard, back/forward) go through URL first,
+  // then this effect syncs the state.
+  useEffect(() => {
+    if (prevRouterSearch.current !== location.search) {
+      // Handle range changes (repo, dates, etc.)
+      handleUrlChanges(prevRouterSearch.current);
 
-    if (isEligible) {
-      clearSelectedJob(countPinnedJobs);
+      // Sync job selection from URL
+      // This handles: user clicks, keyboard navigation, browser back/forward
+      if (jobsLoaded) {
+        syncSelectionFromUrl(jobMap, notify);
+      }
+
+      prevRouterSearch.current = location.search;
     }
+  }, [
+    location.search,
+    handleUrlChanges,
+    jobsLoaded,
+    syncSelectionFromUrl,
+    jobMap,
+    notify,
+  ]);
+
+  if (!revision) {
+    setWindowTitle();
   }
 
-  render() {
-    const {
-      repoName,
-      revision,
-      currentRepo,
-      filterModel,
-      pushList,
-      loadingPushes,
-      fetchNextPushes,
-      getAllShownJobs,
-      jobsLoaded,
-      duplicateJobsVisible,
-      groupCountsExpanded,
-      pushHealthVisibility,
-    } = this.props;
-    const { notificationSupported } = this.state;
-
-    if (!revision) {
-      this.setWindowTitle();
-    }
-    return (
-      // Bug 1619873 - role="list" works better here than an interactive role
-      /* eslint-disable jsx-a11y/no-noninteractive-element-interactions */
-      <div
-        role="list"
-        id="push-list"
-        onClick={(evt) => this.clearIfEligibleTarget(evt.target)}
-      >
-        {jobsLoaded && <span className="hidden ready" />}
-        {repoName &&
-          pushList.map((push) => (
-            <ErrorBoundary
-              errorClasses="pl-2 border-top border-bottom border-dark d-block"
-              message={`Error on push with revision ${push.revision}: `}
-              key={push.id}
+  return (
+    // Bug 1619873 - role="list" works better here than an interactive role
+    /* eslint-disable jsx-a11y/no-noninteractive-element-interactions */
+    <div
+      role="list"
+      id="push-list"
+      onClick={(evt) => clearIfEligibleTarget(evt.target)}
+    >
+      {jobsLoaded && <span className="hidden ready" />}
+      {repoName &&
+        pushList.map((push) => (
+          <ErrorBoundary
+            errorClasses="ps-2 border-top border-bottom border-dark d-block"
+            message={`Error on push with revision ${push.revision}: `}
+            key={push.id}
+          >
+            <Push
+              role="listitem"
+              push={push}
+              currentRepo={currentRepo}
+              filterModel={filterModel}
+              notificationSupported={notificationSupported}
+              duplicateJobsVisible={duplicateJobsVisible}
+              groupCountsExpanded={groupCountsExpanded}
+              isOnlyRevision={push.revision === revision}
+              pushHealthVisibility={pushHealthVisibility}
+              getAllShownJobs={getAllShownJobs}
+            />
+          </ErrorBoundary>
+        ))}
+      {loadingPushes && (
+        <div
+          className="progress active progress-bar progress-bar-striped"
+          role="progressbar"
+          aria-label="Loading tests"
+        />
+      )}
+      {pushList.length === 0 && !loadingPushes && (
+        <PushLoadErrors
+          loadingPushes={loadingPushes}
+          currentRepo={currentRepo}
+          repoName={repoName}
+          revision={revision}
+          landoCommitID={landoCommitID}
+          landoStatus={landoStatus}
+        />
+      )}
+      <div className="card card-body get-next">
+        <span>get next:</span>
+        <div className="btn-group">
+          {[10, 20, 50].map((count) => (
+            <Button
+              variant="outline-dark"
+              className="btn-light-bordered"
+              onClick={() => fetchNextPushes(count)}
+              key={count}
+              data-testid={`get-next-${count}`}
             >
-              <Push
-                role="listitem"
-                push={push}
-                currentRepo={currentRepo}
-                filterModel={filterModel}
-                notificationSupported={notificationSupported}
-                duplicateJobsVisible={duplicateJobsVisible}
-                groupCountsExpanded={groupCountsExpanded}
-                isOnlyRevision={push.revision === revision}
-                pushHealthVisibility={pushHealthVisibility}
-                getAllShownJobs={getAllShownJobs}
-              />
-            </ErrorBoundary>
+              {count}
+            </Button>
           ))}
-        {loadingPushes && (
-          <div
-            className="progress active progress-bar progress-bar-striped"
-            role="progressbar"
-            aria-label="Loading tests"
-          />
-        )}
-        {pushList.length === 0 && !loadingPushes && (
-          <PushLoadErrors
-            loadingPushes={loadingPushes}
-            currentRepo={currentRepo}
-            repoName={repoName}
-            revision={revision}
-          />
-        )}
-        <div className="card card-body get-next">
-          <span>get next:</span>
-          <div className="btn-group">
-            {[10, 20, 50].map((count) => (
-              <Button
-                color="darker-secondary"
-                outline
-                className="btn-light-bordered"
-                onClick={() => fetchNextPushes(count)}
-                key={count}
-                data-testid={`get-next-${count}`}
-              >
-                {count}
-              </Button>
-            ))}
-          </div>
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 }
 
 PushList.propTypes = {
   repoName: PropTypes.string.isRequired,
   filterModel: PropTypes.shape({}).isRequired,
-  pushList: PropTypes.arrayOf(PropTypes.object).isRequired,
-  fetchNextPushes: PropTypes.func.isRequired,
+  pushList: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   fetchPushes: PropTypes.func.isRequired,
   pollPushes: PropTypes.func.isRequired,
   updateRange: PropTypes.func.isRequired,
@@ -215,20 +269,12 @@ PushList.propTypes = {
   duplicateJobsVisible: PropTypes.bool.isRequired,
   groupCountsExpanded: PropTypes.bool.isRequired,
   allUnclassifiedFailureCount: PropTypes.number.isRequired,
-  pushHealthVisibility: PropTypes.string.isRequired,
-  clearSelectedJob: PropTypes.func.isRequired,
-  pinnedJobs: PropTypes.shape({}).isRequired,
-  setSelectedJobFromQueryString: PropTypes.func.isRequired,
   getAllShownJobs: PropTypes.func.isRequired,
   jobMap: PropTypes.shape({}).isRequired,
-  notify: PropTypes.func.isRequired,
   revision: PropTypes.string,
+  landoCommitID: PropTypes.string,
+  landoStatus: PropTypes.string,
   currentRepo: PropTypes.shape({}),
-};
-
-PushList.defaultProps = {
-  revision: null,
-  currentRepo: {},
 };
 
 const mapStateToProps = ({
@@ -239,21 +285,15 @@ const mapStateToProps = ({
     pushList,
     allUnclassifiedFailureCount,
   },
-  pinnedJobs: { pinnedJobs },
 }) => ({
   loadingPushes,
   jobsLoaded,
   jobMap,
   pushList,
   allUnclassifiedFailureCount,
-  pinnedJobs,
 });
 
 export default connect(mapStateToProps, {
-  notify,
-  clearSelectedJob,
-  setSelectedJobFromQueryString,
-  fetchNextPushes,
   fetchPushes,
   updateRange,
   pollPushes,

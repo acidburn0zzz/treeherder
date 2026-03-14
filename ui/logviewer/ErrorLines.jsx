@@ -1,9 +1,11 @@
 import React from 'react';
 import PropTypes from 'prop-types';
 
+import formatLogLineWithLinks from '../helpers/logFormatting';
+
 export default class ErrorLines extends React.PureComponent {
   render() {
-    const { errors, onClickLine } = this.props;
+    const { errors, onClickLine, jobDetails = [], job = null } = this.props;
 
     return (
       <div className="error-lines">
@@ -15,10 +17,14 @@ export default class ErrorLines extends React.PureComponent {
                 onClick={() => onClickLine([error.lineNumber], true)}
                 className="error-line pointable small"
               >
-                <td className="badge badge-secondary pb-1 pr-1 rounded-0">
+                <td className="badge text-bg-secondary pb-1 pe-1 rounded-0">
                   {error.lineNumber}
                 </td>
-                <td className="error-line-text">{error.line}</td>
+                <td className="error-line-text">
+                  {formatLogLineWithLinks(error.line, jobDetails, job, {
+                    onLinkClick: (e) => e.stopPropagation(),
+                  })}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -36,4 +42,11 @@ ErrorLines.propTypes = {
     }),
   ).isRequired,
   onClickLine: PropTypes.func.isRequired,
+  jobDetails: PropTypes.arrayOf(
+    PropTypes.shape({
+      url: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+    }),
+  ),
+  job: PropTypes.shape({}),
 };

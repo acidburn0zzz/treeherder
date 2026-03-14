@@ -1,78 +1,147 @@
-import React from 'react';
+import { useState } from 'react';
 import PropTypes from 'prop-types';
+import { Link } from 'react-router-dom';
 import {
-  UncontrolledDropdown,
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
+  Dropdown,
   Container,
   Row,
   Col,
-  Badge,
-} from 'reactstrap';
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faExternalLinkAlt } from '@fortawesome/free-solid-svg-icons';
-import moment from 'moment';
+  Button,
+  Form,
+  InputGroup,
+} from 'react-bootstrap';
 
-import { getTitle, getFrameworkName } from '../helpers';
-import { getJobsUrl } from '../../helpers/url';
+import { getJobsUrl, getPerfCompareBaseURL } from '../../helpers/url';
+import { toMercurialShortDateStr } from '../../helpers/display';
+import SimpleTooltip from '../../shared/SimpleTooltip';
 
 import Assignee from './Assignee';
 import TagsList from './TagsList';
+import AlertHeaderTitle from './AlertHeaderTitle';
+import { getStatus } from '../perf-helpers/helpers';
 
 const AlertHeader = ({
   frameworks,
   alertSummary,
   repoModel,
-  issueTrackers,
+  issueTrackers = [],
   user,
   updateAssignee,
+  changeRevision,
+  updateViewState,
 }) => {
+  const [inEditMode, setInEditMode] = useState(false);
+  const [newRevisionTo, setnewRevisionTo] = useState(alertSummary.revision);
+  const [newRevisionFrom, setnewRevisionFrom] = useState(
+    alertSummary.prev_push_revision,
+  );
+  const revisionToType = 'to';
+
+  const handleEditMode = () => {
+    setnewRevisionTo('');
+    setnewRevisionFrom('');
+    setInEditMode(true);
+  };
+  const handleRevisionChange = (revisionType) => (event) => {
+    // revisionType can only be "to" or "from"
+    if (revisionType === revisionToType) setnewRevisionTo(event.target.value);
+    else setnewRevisionFrom(event.target.value);
+  };
+  const saveRevision = async () => {
+    const trimmedRevisionTo =
+      newRevisionTo.trim() === ''
+        ? alertSummary.revision
+        : newRevisionTo.trim();
+    const trimmedRevisionFrom =
+      newRevisionFrom.trim() === ''
+        ? alertSummary.prev_push_revision
+        : newRevisionFrom.trim();
+
+    const longHashMatch = /\b[a-f0-9]{40}\b/;
+    if (
+      !longHashMatch.test(trimmedRevisionTo) ||
+      !longHashMatch.test(trimmedRevisionFrom)
+    ) {
+      updateViewState({
+        errorMessages: [
+          `Invalid Revision format, expected a 40 character hash.`,
+        ],
+      });
+      return;
+    }
+    const response = await changeRevision(
+      trimmedRevisionTo,
+      trimmedRevisionFrom,
+    );
+    if (!response.failureStatus) {
+      setInEditMode(false);
+    }
+  };
+  const cancelEditMode = () => {
+    setInEditMode(false);
+  };
   const getIssueTrackerUrl = () => {
-    const { issueTrackerUrl } = issueTrackers.find(
+    const { issue_tracker_url: issueTrackerUrl } = issueTrackers.find(
       (tracker) => tracker.id === alertSummary.issue_tracker,
     );
     return issueTrackerUrl + alertSummary.bug_number;
+  };
+  const handleRevertRevision = (revisionType) => () => {
+    // revisionType can only be "to" or "from"
+    if (revisionType === revisionToType)
+      setnewRevisionTo(alertSummary.original_revision);
+    else setnewRevisionFrom(alertSummary.original_prev_push_revision);
   };
   const bugNumber = alertSummary.bug_number
     ? `Bug ${alertSummary.bug_number}`
     : '';
 
   const performanceTags = alertSummary.performance_tags || [];
+  const alertSummaryDatetime = new Date(alertSummary.push_timestamp * 1000);
+  const formattedSummaryRevision = alertSummary.revision.slice(0, 12);
+  const created = new Date(alertSummary.created.slice(0, 19));
 
   return (
     <Container>
-      <Row>
-        <a
-          className="text-dark"
-          href={`#/alerts?id=${alertSummary.id}`}
-          id={`alert summary ${alertSummary.id.toString()} title`}
-          data-testid={`alert summary ${alertSummary.id.toString()} title`}
-        >
-          <h3 className="font-weight-bold align-middle">
-            <Badge className="mr-2">
-              {getFrameworkName(frameworks, alertSummary.framework)}
-            </Badge>
-            Alert #{alertSummary.id} - {alertSummary.repository} -{' '}
-            {getTitle(alertSummary)}{' '}
-            <FontAwesomeIcon
-              icon={faExternalLinkAlt}
-              className="icon-superscript"
+      <AlertHeaderTitle alertSummary={alertSummary} frameworks={frameworks} />
+      <Row className="font-weight-normal gap-2">
+        <Col className="p-0 pe-1" xs="auto">
+          <Row className="m-0 px-0 py-0">
+            <SimpleTooltip
+              text={toMercurialShortDateStr(alertSummaryDatetime)}
+              tooltipText="Push date"
             />
-          </h3>
-        </a>
-      </Row>
-      <Row className="font-weight-normal">
-        <Col className="p-0" xs="auto">{`${moment(
-          alertSummary.push_timestamp * 1000,
-        ).format('ddd MMM D, HH:mm:ss')}`}</Col>
+          </Row>
+          <Row className="m-0 px-0 py-0">
+            <SimpleTooltip
+              text={toMercurialShortDateStr(created)}
+              tooltipText="Alert Summary created"
+            />
+          </Row>
+        </Col>
+        {user.isStaff && (
+          <Col className="p-0" xs="auto">
+            <Button
+              variant="darker-secondary"
+              size="xs"
+              onClick={handleEditMode}
+              title="Click to edit revision"
+            >
+              Edit Revisions
+            </Button>
+          </Col>
+        )}
         <Col className="p-0" xs="auto">
-          <UncontrolledDropdown tag="span">
-            <DropdownToggle className="btn-xs ml-2" color="secondary" caret>
-              {alertSummary.revision.slice(0, 12)}
-            </DropdownToggle>
-            <DropdownMenu>
-              <DropdownItem
+          <Dropdown tag="span">
+            <Dropdown.Toggle
+              className="btn-xs"
+              variant="secondary"
+              data-testid="push-dropdown"
+            >
+              {formattedSummaryRevision}
+            </Dropdown.Toggle>
+            <Dropdown.Menu className="overflow-auto dropdown-menu-height">
+              <Dropdown.Item
                 tag="a"
                 className="text-dark"
                 href={getJobsUrl({
@@ -84,8 +153,8 @@ const AlertHeader = ({
                 rel="noopener noreferrer"
               >
                 Jobs
-              </DropdownItem>
-              <DropdownItem
+              </Dropdown.Item>
+              <Dropdown.Item
                 tag="a"
                 className="text-dark"
                 href={repoModel.getPushLogRangeHref({
@@ -96,15 +165,29 @@ const AlertHeader = ({
                 rel="noopener noreferrer"
               >
                 Pushlog
-              </DropdownItem>
-            </DropdownMenu>
-          </UncontrolledDropdown>
+              </Dropdown.Item>
+              <Dropdown.Item
+                className="text-dark"
+                disabled
+                data-testid="prev-push-revision"
+              >
+                From: {`${alertSummary.prev_push_revision.slice(0, 12)}`}
+              </Dropdown.Item>
+              <Dropdown.Item
+                className="text-dark"
+                disabled
+                data-testid="to-push-revision"
+              >
+                To: {formattedSummaryRevision}
+              </Dropdown.Item>
+            </Dropdown.Menu>
+          </Dropdown>
         </Col>
         {bugNumber && (
           <Col className="p-0" xs="auto">
             {alertSummary.issue_tracker && issueTrackers.length > 0 ? (
               <a
-                className="btn btn-secondary btn-xs ml-1 text-white"
+                className="btn btn-secondary btn-xs text-white"
                 href={getIssueTrackerUrl(alertSummary)}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -124,6 +207,44 @@ const AlertHeader = ({
           />
         </Col>
       </Row>
+      <Row className="px-0 py-2">
+        <a
+          href={getPerfCompareBaseURL(
+            alertSummary.repository,
+            alertSummary.prev_push_revision,
+            alertSummary.repository,
+            alertSummary.revision,
+            alertSummary.framework,
+          )}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          PerfCompare comparison
+        </a>
+        {(alertSummary.original_revision !== alertSummary.revision ||
+          alertSummary.original_prev_push_revision !==
+            alertSummary.prev_push_revision) && (
+          <span className="px-2">Revisions have been modified.</span>
+        )}
+      </Row>
+      {alertSummary.duplicated_summaries.length > 0 && (
+        <Row>
+          Duplicated summaries:
+          {alertSummary.duplicated_summaries.map((summary, index) => (
+            <Link
+              key={summary.id}
+              className="text-dark me-1"
+              target="_blank"
+              to={`./alerts?id=${summary.id}&hideDwnToInv=0`}
+              id={`duplicated alert summary ${summary.id.toString()} `}
+              style={{ marginLeft: '5px' }}
+            >
+              Alert #{summary.id} - {getStatus(summary.status)}
+              {alertSummary.duplicated_summaries.length - 1 !== index && ', '}
+            </Link>
+          ))}
+        </Row>
+      )}
       <Row>
         {performanceTags.length > 0 && (
           <Col className="p-0" xs="auto">
@@ -131,6 +252,95 @@ const AlertHeader = ({
           </Col>
         )}
       </Row>
+      {inEditMode && (
+        <div>
+          <Row className="mb-2">
+            <Col xs="2" className="p-0 align-content-center">
+              <span className="align-middle">Current From: </span>
+            </Col>
+            <Col xs="2" className="p-0 align-content-center">
+              <span className="align-middle">
+                {`${alertSummary.prev_push_revision.slice(0, 12)}`}{' '}
+              </span>
+            </Col>
+
+            <Col xs="5" className="p-0">
+              <InputGroup size="sm">
+                <Form.Control
+                  value={newRevisionFrom}
+                  placeholder="Enter desired revision"
+                  onChange={handleRevisionChange('from')}
+                  autoFocus
+                />
+              </InputGroup>
+            </Col>
+            <Col xs="3" className="p-0">
+              <Button
+                className="ms-1"
+                size="sm"
+                disabled={
+                  alertSummary.original_prev_push_revision ===
+                  alertSummary.prev_push_revision
+                }
+                onClick={handleRevertRevision('from')}
+              >
+                Reset Revision
+              </Button>
+            </Col>
+          </Row>
+          <Row className="mb-2">
+            <Col xs="2" className="p-0 align-content-center">
+              <span className="align-middle">Current To: </span>
+            </Col>
+            <Col xs="2" className="p-0 align-content-center">
+              <span className="align-middle">{formattedSummaryRevision} </span>
+            </Col>
+            <Col xs="5" className="p-0">
+              <InputGroup size="sm">
+                <Form.Control
+                  value={newRevisionTo}
+                  placeholder="Enter desired revision"
+                  onChange={handleRevisionChange('to')}
+                  autoFocus
+                />
+              </InputGroup>
+            </Col>
+            <Col xs="3" className="p-0">
+              <Button
+                className="ms-1"
+                size="sm"
+                disabled={
+                  alertSummary.original_revision === alertSummary.revision
+                }
+                onClick={handleRevertRevision('to')}
+              >
+                Reset Revision
+              </Button>
+            </Col>
+          </Row>
+          <Row>
+            <Col className="p-0">
+              <Button
+                variant="primary"
+                className="ms-1"
+                size="xs"
+                disabled={newRevisionTo === '' && newRevisionFrom === ''}
+                onClick={saveRevision}
+              >
+                Save
+              </Button>
+              <Button
+                variant="secondary"
+                className="ms-1"
+                size="xs"
+                onClick={cancelEditMode}
+              >
+                Cancel
+              </Button>
+            </Col>
+          </Row>
+        </div>
+      )}
     </Container>
   );
 };
@@ -140,10 +350,6 @@ AlertHeader.propTypes = {
   repoModel: PropTypes.shape({}).isRequired,
   user: PropTypes.shape({}).isRequired,
   issueTrackers: PropTypes.arrayOf(PropTypes.shape({})),
-};
-
-AlertHeader.defaultProps = {
-  issueTrackers: [],
 };
 
 export default AlertHeader;

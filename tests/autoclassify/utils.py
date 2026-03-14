@@ -2,7 +2,6 @@ from mozlog.formatters.tbplformatter import TbplFormatter
 
 from treeherder.model.models import (
     FailureLine,
-    Job,
     JobLog,
     TextLogError,
     TextLogErrorMetadata,
@@ -28,7 +27,6 @@ def create_lines(test_job, lines):
     for error_line, failure_line in zip(error_lines, failure_lines):
         TextLogErrorMetadata.objects.create(text_log_error=error_line, failure_line=failure_line)
 
-    test_job.autoclassify_status = Job.CROSSREFERENCED
     test_job.save()
 
     return error_lines, failure_lines
@@ -43,11 +41,11 @@ def create_failure_lines(job, failure_line_list, start_line=0):
         failure_line = FailureLine(**data)
         job_log = JobLog.objects.create(
             job=job,
-            name='{}{}'.format(base_data.get('test'), job.id),
-            url='bar{}'.format(i),
+            name="{}{}".format(base_data.get("test"), job.id),
+            url=f"bar{i}",
             status=1,
         )
-        print('create jobLog for job id: {}'.format(job.id))
+        print(f"create jobLog for job id: {job.id}")
         failure_line.job_log = job_log
         failure_line.save()
         failure_lines.append(failure_line)
@@ -83,7 +81,7 @@ def create_text_log_errors(job, failure_line_list):
         if not data:
             continue
         error = TextLogError.objects.create(
-            job=job, line=formatter(data).split("\n")[0], line_number=i
+            job=job, line=formatter(data).split("\n")[0], line_number=i, new_failure=True
         )
         errors.append(error)
 

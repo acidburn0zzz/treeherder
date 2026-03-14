@@ -1,17 +1,22 @@
-import React from 'react';
+
 import { render, cleanup } from '@testing-library/react';
 
 import TableView from '../../../ui/perfherder/graphs/TableView';
-import { graphColors, graphSymbols } from '../../../ui/perfherder/constants';
+import {
+  graphColors,
+  graphSymbols,
+} from '../../../ui/perfherder/perf-helpers/constants';
 import repos from '../mock/repositories';
 import testData from '../mock/performance_summary.json';
-import { createGraphData } from '../../../ui/perfherder/helpers';
+import commonAlerts from '../mock/alert_summaries_common.json';
+import { createGraphData } from '../../../ui/perfherder/perf-helpers/helpers';
 
 const graphData = createGraphData(
   testData,
   [],
   [...graphColors],
   [...graphSymbols],
+  [...commonAlerts],
 );
 
 const tableView = (

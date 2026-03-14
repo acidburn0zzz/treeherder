@@ -1,33 +1,27 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
-import { connect } from 'react-redux';
-import {
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { Dropdown } from 'react-bootstrap';
 import { faCheck } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
+import { Link } from 'react-router-dom';
 
+import {
+  thDefaultFilterResultStatuses,
+  arraysEqual,
+} from '../../helpers/filter';
 import { thAllResultStatuses } from '../../helpers/constants';
-import { getJobsUrl } from '../../helpers/url';
-import { setSelectedJob, clearSelectedJob } from '../redux/stores/selectedJob';
-import { pinJobs } from '../redux/stores/pinnedJobs';
+import {
+  useSelectedJobStore,
+  setSelectedJob,
+} from '../stores/selectedJobStore';
+import { pinJobs } from '../stores/pinnedJobsStore';
 
 const resultStatusMenuItems = thAllResultStatuses.filter(
   (rs) => rs !== 'runnable',
 );
 
-function FiltersMenu(props) {
-  const {
-    filterModel,
-    pinJobs,
-    getAllShownJobs,
-    selectedJob,
-    setSelectedJob,
-    user,
-  } = props;
+function FiltersMenu({ filterModel, getAllShownJobs, user }) {
+  const selectedJob = useSelectedJobStore((state) => state.selectedJob);
   const {
     urlParams: { resultStatus, classifiedState },
   } = filterModel;
@@ -42,110 +36,150 @@ function FiltersMenu(props) {
   };
   const { email } = user;
 
+  const updateParams = (param, value) => {
+    const params = new URLSearchParams(window.location.search);
+    params.set(param, value);
+    return `?${params.toString()}`;
+  };
+
   return (
-    <UncontrolledDropdown>
-      <DropdownToggle
+    <Dropdown>
+      <Dropdown.Toggle
         title="Set filters"
         className="btn-view-nav nav-menu-btn"
-        caret
       >
         Filters
-      </DropdownToggle>
-      <DropdownMenu>
+      </Dropdown.Toggle>
+      <Dropdown.Menu>
         {resultStatusMenuItems.map((filterName) => (
-          <DropdownItem
+          <Dropdown.Item
             key={filterName}
-            tag="a"
+            as="a"
             onClick={() => filterModel.toggleResultStatuses([filterName])}
           >
             <FontAwesomeIcon
               icon={faCheck}
-              className={`mr-1 ${
+              className={`me-1 ${
                 resultStatus.includes(filterName) ? '' : 'hide'
               }`}
               title={resultStatus.includes(filterName) ? 'Selected' : ''}
             />
             {filterName}
-          </DropdownItem>
+          </Dropdown.Item>
         ))}
-        <DropdownItem divider />
-        <DropdownItem
-          tag="a"
-          onClick={() => filterModel.toggleClassifiedFilter('classified')}
+        <Dropdown.Divider />
+        <Dropdown.Item
+          as="a"
+          onClick={() =>
+            arraysEqual(resultStatus, thDefaultFilterResultStatuses) &&
+            arraysEqual(classifiedState, ['unclassified', 'classified'])
+              ? filterModel.toggleClassifiedFailures(true)
+              : filterModel.resetNonFieldFilters()
+          }
         >
           <FontAwesomeIcon
             icon={faCheck}
-            className={`mr-1 ${
-              classifiedState.includes('classified') ? '' : 'hide'
+            className={`me-1 ${
+              arraysEqual(resultStatus, thDefaultFilterResultStatuses) &&
+              arraysEqual(classifiedState, ['unclassified', 'classified'])
+                ? ''
+                : 'hide'
             }`}
-            title={classifiedState.includes('classified') ? 'Selected' : ''}
+            title={
+              arraysEqual(resultStatus, thDefaultFilterResultStatuses) &&
+              arraysEqual(classifiedState, ['unclassified', 'classified'])
+                ? 'Selected'
+                : ''
+            }
           />
-          classified
-        </DropdownItem>
-        <DropdownItem
-          tag="a"
-          onClick={() => filterModel.toggleClassifiedFilter('unclassified')}
+          All jobs
+        </Dropdown.Item>
+        <Dropdown.Item
+          as="a"
+          onClick={() => filterModel.toggleClassifiedFailures(true)}
         >
           <FontAwesomeIcon
             icon={faCheck}
-            className={`mr-1 ${
-              classifiedState.includes('unclassified') ? '' : 'hide'
+            className={`me-1 ${
+              filterModel.isClassifiedFailures(true) ? '' : 'hide'
             }`}
-            title={classifiedState.includes('unclassified') ? 'Selected' : ''}
+            title={filterModel.isClassifiedFailures(true) ? 'Selected' : ''}
           />
-          unclassified
-        </DropdownItem>
-        <DropdownItem divider />
-        <DropdownItem
-          tag="a"
+          All failures
+        </Dropdown.Item>
+        <Dropdown.Item
+          as="a"
+          onClick={() => filterModel.toggleUnclassifiedFailures()}
+        >
+          <FontAwesomeIcon
+            icon={faCheck}
+            className={`me-1 ${
+              filterModel.isUnclassifiedFailures() ? '' : 'hide'
+            }`}
+            title={filterModel.isUnclassifiedFailures() ? 'Selected' : ''}
+          />
+          Unclassified failures
+        </Dropdown.Item>
+        <Dropdown.Item
+          as="a"
+          onClick={() => filterModel.toggleClassifiedFailures()}
+        >
+          <FontAwesomeIcon
+            icon={faCheck}
+            className={`me-1 ${
+              filterModel.isClassifiedFailures() ? '' : 'hide'
+            }`}
+            title={filterModel.isClassifiedFailures() ? 'Selected' : ''}
+          />
+          Classified failures
+        </Dropdown.Item>
+        <Dropdown.Divider />
+        <Dropdown.Item
+          as="a"
           title="Pin all jobs that pass the global filters"
           onClick={pinAllShownJobs}
         >
           Pin all showing
-        </DropdownItem>
-        <DropdownItem
-          tag="a"
+        </Dropdown.Item>
+        <Dropdown.Item
+          as="a"
           title="Show only superseded jobs"
           onClick={filterModel.setOnlySuperseded}
         >
           Superseded only
-        </DropdownItem>
-        <DropdownItem
-          tag="a"
+        </Dropdown.Item>
+        <Dropdown.Item
+          as={Link}
+          className="dropdown-link"
+          to={{ search: updateParams('author', email) }}
           title={`Show only pushes for ${email}`}
-          href={getJobsUrl({ author: email })}
         >
           My pushes only
-        </DropdownItem>
-        <DropdownItem
-          tag="a"
+        </Dropdown.Item>
+        <Dropdown.Item
+          as={Link}
+          className="dropdown-link"
+          to={{ search: updateParams('author', '-reviewbot') }}
+          title="Do not show pushes from reviewbot"
+        >
+          Hide code review pushes
+        </Dropdown.Item>
+        <Dropdown.Item
+          as="a"
           title="Reset to default status filters"
           onClick={filterModel.resetNonFieldFilters}
         >
           Reset
-        </DropdownItem>
-      </DropdownMenu>
-    </UncontrolledDropdown>
+        </Dropdown.Item>
+      </Dropdown.Menu>
+    </Dropdown>
   );
 }
 
 FiltersMenu.propTypes = {
   filterModel: PropTypes.shape({}).isRequired,
-  pinJobs: PropTypes.func.isRequired,
-  setSelectedJob: PropTypes.func.isRequired,
   getAllShownJobs: PropTypes.func.isRequired,
-  selectedJob: PropTypes.shape({}),
   user: PropTypes.shape({}).isRequired,
 };
 
-FiltersMenu.defaultProps = {
-  selectedJob: null,
-};
-
-const mapStateToProps = ({ selectedJob: { selectedJob } }) => ({ selectedJob });
-
-export default connect(mapStateToProps, {
-  setSelectedJob,
-  clearSelectedJob,
-  pinJobs,
-})(FiltersMenu);
+export default FiltersMenu;

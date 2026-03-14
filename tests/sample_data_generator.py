@@ -2,6 +2,7 @@
 Functions for flexible generation of sample input job JSON.
 
 """
+
 import time
 from datetime import timedelta
 
@@ -10,22 +11,22 @@ def job_data(**kwargs):
     jobs_obj = {
         "revision": kwargs.get("revision", "24fd64b8251fac5cf60b54a915bffa7e51f636b5"),
         "job": {
-            u"build_platform": build_platform(**kwargs.pop("build_platform", {})),
-            u"submit_timestamp": kwargs.pop("submit_timestamp", submit_timestamp()),
-            u"start_timestamp": kwargs.pop("start_timestamp", start_timestamp()),
-            u"name": kwargs.pop("name", u"mochitest-5"),
-            u"option_collection": option_collection(**kwargs.pop("option_collection", {})),
-            u"log_references": log_references(kwargs.pop("log_references", [])),
-            u"who": kwargs.pop("who", u"sendchange-unittest"),
-            u"reason": kwargs.pop("reason", u"scheduler"),
-            u"artifact": kwargs.pop("artifact", {}),
-            u"machine_platform": machine_platform(**kwargs.pop("machine_platform", {})),
-            u"machine": kwargs.pop("machine", u"talos-r3-xp-088"),
-            u"state": kwargs.pop("state", u"completed"),
-            u"result": kwargs.pop("result", 0),
-            u"job_guid": kwargs.pop(u"job_guid", u"f3e3a9e6526881c39a3b2b6ff98510f213b3d4ed"),
-            u"product_name": kwargs.pop("product_name", u"firefox"),
-            u"end_timestamp": kwargs.pop("end_timestamp", end_timestamp()),
+            "build_platform": build_platform(**kwargs.pop("build_platform", {})),
+            "submit_timestamp": kwargs.pop("submit_timestamp", submit_timestamp()),
+            "start_timestamp": kwargs.pop("start_timestamp", start_timestamp()),
+            "name": kwargs.pop("name", "mochitest-5"),
+            "option_collection": option_collection(**kwargs.pop("option_collection", {})),
+            "log_references": log_references(kwargs.pop("log_references", [])),
+            "who": kwargs.pop("who", "sendchange-unittest"),
+            "reason": kwargs.pop("reason", "scheduler"),
+            "artifact": kwargs.pop("artifact", {}),
+            "machine_platform": machine_platform(**kwargs.pop("machine_platform", {})),
+            "machine": kwargs.pop("machine", "talos-r3-xp-088"),
+            "state": kwargs.pop("state", "completed"),
+            "result": kwargs.pop("result", 0),
+            "job_guid": kwargs.pop("job_guid", "f3e3a9e6526881c39a3b2b6ff98510f213b3d4ed"),
+            "product_name": kwargs.pop("product_name", "firefox"),
+            "end_timestamp": kwargs.pop("end_timestamp", end_timestamp()),
         },
     }
 
@@ -35,7 +36,7 @@ def job_data(**kwargs):
 
 
 def to_seconds(td):
-    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10 ** 6) / 10 ** 6
+    return (td.microseconds + (td.seconds + td.days * 24 * 3600) * 10**6) / 10**6
 
 
 def get_timestamp_days_ago(days_ago):
@@ -63,7 +64,7 @@ def option_collection(**kwargs):
     Return a sample data structure, with default values.
 
     """
-    defaults = {u"debug": True}
+    defaults = {"debug": True}
 
     defaults.update(kwargs)
 
@@ -72,7 +73,12 @@ def option_collection(**kwargs):
 
 def log_references(log_refs=None):
     if not log_refs:
-        log_refs = [{u"url": u"http://ftp.mozilla.org/pub/...", u"name": u"unittest"}]
+        log_refs = [
+            {
+                "url": "https://firefox-ci-tc.services.mozilla.com/api/queue/v1/task/...",
+                "name": "unittest",
+            }
+        ]
     return log_refs
 
 
@@ -82,9 +88,9 @@ def build_platform(**kwargs):
 
     """
     defaults = {
-        u"platform": u"WINNT5.1",
-        u"os_name": u"win",
-        u"architecture": u"x86",
+        "platform": "Windows11",
+        "os_name": "win",
+        "architecture": "x86_64",
     }
 
     defaults.update(kwargs)
@@ -98,9 +104,9 @@ def machine_platform(**kwargs):
 
     """
     defaults = {
-        u"platform": u"WINNT5.1",
-        u"os_name": u"win",
-        u"architecture": u"x86",
+        "platform": "Windows11",
+        "os_name": "win",
+        "architecture": "x86_64",
     }
 
     defaults.update(kwargs)

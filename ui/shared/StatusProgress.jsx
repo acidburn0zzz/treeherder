@@ -1,38 +1,42 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
 import { VictoryPie, VictoryTooltip } from 'victory';
 
 import { getPercentComplete } from '../helpers/display';
 
-const StatusProgress = (props) => {
-  const {
-    counts: { success, testfailed, busted, running, pending },
-  } = props;
-  const failed = testfailed || 0 + busted || 0;
-  const percentComplete = props.counts ? getPercentComplete(props.counts) : 0;
+// Absorbs Victory's non-DOM props (pointerLength, activePoints, etc.)
+// to prevent React warnings when used as a flyoutComponent.
+const EmptyFlyout = () => <g />;
+
+const StatusProgress = ({ counts, customStyle = '' }) => {
+  // testfailed includes lint, build ("busted") and test failures
+  // but excludes intermittent failures
+  const { success, testfailed, running, pending } = counts;
+  const percentComplete = counts ? getPercentComplete(counts) : 0;
+  let data = [
+    { x: 'success', y: success },
+    { x: 'in progress', y: running + pending },
+    { x: 'failed', y: testfailed },
+  ];
+  if (percentComplete === 100) data = [{ x: 'success', y: percentComplete }];
 
   return (
-    <div className="relative">
+    <div className={`progress-relative ${customStyle}`}>
       <VictoryPie
-        data={[
-          { x: 'success', y: success },
-          { x: 'running', y: running + pending },
-          { x: 'failed', y: failed },
-        ]}
+        data={data}
         colorScale={['#28a745', 'lightgrey', '#dc3545']}
         labels={({ datum }) => (datum.y > 0 ? `${datum.x}: ${datum.y}` : '')}
         labelComponent={
-          <VictoryTooltip pointerLength={0} flyoutComponent={<div />} />
+          <VictoryTooltip pointerLength={0} flyoutComponent={<EmptyFlyout />} />
         }
         labelRadius={({ innerRadius }) => innerRadius}
-        height={200}
-        width={200}
-        padding={{ top: 15, bottom: 15 }}
+        height={250}
+        width={250}
         innerRadius={70}
         radius={85}
       />
-      <div className="absolute">
-        <div style={{ fontSize: '30px' }}>{percentComplete}%</div>
+      <div className="absolute-progress">
+        <div className="metric-name">{percentComplete}%</div>
         <div>Complete</div>
       </div>
     </div>
@@ -41,6 +45,7 @@ const StatusProgress = (props) => {
 
 StatusProgress.propTypes = {
   counts: PropTypes.objectOf(PropTypes.number).isRequired,
+  customStyle: PropTypes.string,
 };
 
 export default StatusProgress;

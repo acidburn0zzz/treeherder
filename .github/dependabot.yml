@@ -1,0 +1,25 @@
+version: 2
+updates:
+- package-ecosystem: pip
+  directories:
+    - "/"
+    - "/requirements"
+  schedule:
+    interval: daily
+  open-pull-requests-limit: 99
+  labels:
+  - dependencies
+- package-ecosystem: docker
+  directories:
+    - "/"
+    - "/docker"
+  schedule:
+    interval: daily
+  labels:
+  - dependencies
+- package-ecosystem: npm
+  directory: "/"
+  schedule:
+    interval: daily
+  labels:
+  - dependencies

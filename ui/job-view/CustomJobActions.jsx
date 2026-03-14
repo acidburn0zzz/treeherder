@@ -4,22 +4,9 @@ import PropTypes from 'prop-types';
 import Ajv from 'ajv';
 import jsonSchemaDefaults from 'json-schema-defaults';
 import keyBy from 'lodash/keyBy';
-// js-yaml is missing the `browser` entry from the package definition,
-// so we have to explicitly import the dist file otherwise we get the
-// node version which pulls in a number of unwanted polyfills. See:
-// https://github.com/nodeca/js-yaml/pull/462
-import jsyaml from 'js-yaml/dist/js-yaml';
+import jsyaml from 'js-yaml';
 import tcLibUrls from 'taskcluster-lib-urls';
-import {
-  Button,
-  DropdownToggle,
-  Label,
-  Modal,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { Button, Dropdown, Form, Modal } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faCheckSquare } from '@fortawesome/free-regular-svg-icons';
 
@@ -28,14 +15,14 @@ import TaskclusterModel from '../models/taskcluster';
 import DropdownMenuItems from '../shared/DropdownMenuItems';
 import { checkRootUrl } from '../taskcluster-auth-callback/constants';
 
-import { notify } from './redux/stores/notifications';
+import { notify } from './stores/notificationStore';
 
 class CustomJobActions extends React.PureComponent {
   constructor(props) {
     super(props);
 
     this.state = {
-      ajv: new Ajv({ format: 'full', verbose: true, allErrors: true }),
+      ajv: new Ajv({ validateFormats: false, verbose: true, allErrors: true }),
       decisionTaskId: null,
       originalTaskId: null,
       originalTask: null,
@@ -44,11 +31,12 @@ class CustomJobActions extends React.PureComponent {
       selectedAction: {},
       schema: '',
       payload: '',
+      dropdownOpen: false,
     };
   }
 
   async componentDidMount() {
-    const { pushId, job, notify, decisionTaskMap, currentRepo } = this.props;
+    const { pushId, job = null, decisionTaskMap, currentRepo } = this.props;
     const { id: decisionTaskId } = decisionTaskMap[pushId];
 
     TaskclusterModel.load(decisionTaskId, job, currentRepo).then((results) => {
@@ -100,13 +88,17 @@ class CustomJobActions extends React.PureComponent {
     this.setState({ payload });
   }
 
+  toggleDropdown = () => {
+    this.setState((prevState) => ({ dropdownOpen: !prevState.dropdownOpen }));
+  };
+
   updateSelectedAction = (action) => {
     const { ajv } = this.state;
 
     if (action.schema) {
       this.setState({
-        schema: jsyaml.safeDump(action.schema),
-        payload: jsyaml.safeDump(jsonSchemaDefaults(action.schema)),
+        schema: jsyaml.dump(action.schema),
+        payload: jsyaml.dump(jsonSchemaDefaults(action.schema)),
         validate: ajv.compile(action.schema),
       });
     } else {
@@ -126,12 +118,12 @@ class CustomJobActions extends React.PureComponent {
       selectedAction: action,
       staticActionVariables,
     } = this.state;
-    const { notify, currentRepo } = this.props;
+    const { currentRepo } = this.props;
 
     let input = null;
     if (validate && payload) {
       try {
-        input = jsyaml.safeLoad(payload);
+        input = jsyaml.load(payload);
       } catch (e) {
         this.setState({ triggering: false });
         notify(`YAML Error: ${e.message}`, 'danger');
@@ -155,7 +147,7 @@ class CustomJobActions extends React.PureComponent {
       currentRepo,
     }).then(
       (taskId) => {
-        this.setState({ triggering: false });
+        this.setState({ triggering: false }, this.close);
         let message = 'Custom action request sent successfully:';
         let url = tcLibUrls.ui(
           checkRootUrl(currentRepo.tc_root_url),
@@ -179,8 +171,7 @@ class CustomJobActions extends React.PureComponent {
       },
       (e) => {
         notify(formatTaskclusterError(e), 'danger', { sticky: true });
-        this.setState({ triggering: false });
-        this.close();
+        this.setState({ triggering: false }, this.close);
       },
     );
   };
@@ -201,11 +192,11 @@ class CustomJobActions extends React.PureComponent {
     const isOpen = true;
 
     return (
-      <Modal isOpen={isOpen} toggle={this.close} size="lg">
-        <ModalHeader toggle={this.close}>
-          Custom Taskcluster Job Actions
-        </ModalHeader>
-        <ModalBody>
+      <Modal show={isOpen} onHide={this.close} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>Custom Taskcluster Job Actions</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
           {!actions && (
             <div>
               <p className="blink"> Getting available actions...</p>
@@ -214,21 +205,23 @@ class CustomJobActions extends React.PureComponent {
           {!!actions && (
             <div>
               <div className="form-group">
-                <Label for="action-select-input">Action</Label>
-                <UncontrolledDropdown
+                <Form.Label for="action-select-input">Action</Form.Label>
+                <Dropdown
+                  show={this.state.dropdownOpen}
+                  onToggle={this.toggleDropdown}
                   aria-describedby="selectedActionHelp"
                   className="mb-1"
                   id="action-select-input"
                 >
-                  <DropdownToggle caret outline>
-                    {selectedAction.name}
-                  </DropdownToggle>
-                  <DropdownMenuItems
-                    selectedItem={selectedAction.name}
-                    updateData={this.onChangeAction}
-                    options={Object.keys(actions)}
-                  />
-                </UncontrolledDropdown>
+                  <Dropdown.Toggle>{selectedAction.name}</Dropdown.Toggle>
+                  <Dropdown.Menu>
+                    <DropdownMenuItems
+                      selectedItem={selectedAction.name}
+                      updateData={this.onChangeAction}
+                      options={Object.keys(actions)}
+                    />
+                  </Dropdown.Menu>
+                </Dropdown>
                 <p id="selectedActionHelp" className="help-block">
                   {selectedAction.description}
                 </p>
@@ -245,9 +238,9 @@ class CustomJobActions extends React.PureComponent {
                 {!!selectedAction.schema && (
                   <React.Fragment>
                     <div className="col-s-12 col-md-6 form-group">
-                      <Label for="payload-textarea" className="w-100">
+                      <Form.Label for="payload-textarea" className="w-100">
                         Payload
-                      </Label>
+                      </Form.Label>
                       <textarea
                         id="payload-textarea"
                         value={payload}
@@ -260,9 +253,9 @@ class CustomJobActions extends React.PureComponent {
                       />
                     </div>
                     <div className="col-s-12 col-md-6 form-group">
-                      <Label for="schema-textarea" className="w-100">
+                      <Form.Label for="schema-textarea" className="w-100">
                         Schema
-                      </Label>
+                      </Form.Label>
                       <textarea
                         id="schema-textarea"
                         className="form-control pre"
@@ -276,25 +269,25 @@ class CustomJobActions extends React.PureComponent {
               </div>
             </div>
           )}
-        </ModalBody>
-        <ModalFooter>
+        </Modal.Body>
+        <Modal.Footer>
           <Button
-            color="darker-info"
+            variant="darker-info"
             className={triggering ? 'disabled' : ''}
             onClick={this.triggerAction}
             title="Trigger this action"
           >
             <FontAwesomeIcon
               icon={faCheckSquare}
-              className="mr-1"
+              className="me-1"
               title="Check"
             />
             <span>{triggering ? 'Triggering' : 'Trigger'}</span>
           </Button>
-          <Button color="secondary" onClick={toggle}>
+          <Button variant="secondary" onClick={toggle}>
             Cancel
           </Button>
-        </ModalFooter>
+        </Modal.Footer>
       </Modal>
     );
   }
@@ -302,19 +295,14 @@ class CustomJobActions extends React.PureComponent {
 
 CustomJobActions.propTypes = {
   pushId: PropTypes.number.isRequired,
-  notify: PropTypes.func.isRequired,
   toggle: PropTypes.func.isRequired,
   decisionTaskMap: PropTypes.shape({}).isRequired,
   job: PropTypes.shape({}),
   currentRepo: PropTypes.shape({}).isRequired,
 };
 
-CustomJobActions.defaultProps = {
-  job: null,
-};
-
 const mapStateToProps = ({ pushes: { decisionTaskMap } }) => ({
   decisionTaskMap,
 });
 
-export default connect(mapStateToProps, { notify })(CustomJobActions);
+export default connect(mapStateToProps)(CustomJobActions);

@@ -1,8 +1,8 @@
 import React from 'react';
-import { ButtonDropdown, DropdownToggle } from 'reactstrap';
-import moment from 'moment';
+import { DropdownButton } from 'react-bootstrap';
 import PropTypes from 'prop-types';
 
+import dayjs from '../helpers/dayjs';
 import DropdownMenuItems from '../shared/DropdownMenuItems';
 
 import DateRangePicker from './DateRangePicker';
@@ -12,14 +12,9 @@ export default class DateOptions extends React.Component {
   constructor(props) {
     super(props);
     this.state = {
-      dropdownOpen: false,
       dateRange: '',
     };
   }
-
-  toggle = () => {
-    this.setState((prevState) => ({ dropdownOpen: !prevState.dropdownOpen }));
-  };
 
   updateDateRange = (dateRange) => {
     this.setState({ dateRange });
@@ -35,14 +30,14 @@ export default class DateOptions extends React.Component {
       // bug history is max 4 months
       from = 120;
     }
-    const startday = ISODate(moment().utc().subtract(from, 'days'));
-    const endday = ISODate(moment().utc());
+    const startday = ISODate(dayjs().utc().subtract(from, 'days'));
+    const endday = ISODate(dayjs().utc());
     this.props.updateState({ startday, endday });
   };
 
   render() {
     const { updateState } = this.props;
-    const { dropdownOpen, dateRange } = this.state;
+    const { dateRange } = this.state;
     const dateOptions = [
       'last 7 days',
       'last 30 days',
@@ -52,18 +47,13 @@ export default class DateOptions extends React.Component {
 
     return (
       <div className="d-inline-block">
-        <ButtonDropdown
-          className="mr-3"
-          isOpen={dropdownOpen}
-          toggle={this.toggle}
-        >
-          <DropdownToggle caret>date range</DropdownToggle>
+        <DropdownButton className="me-3" title="date range">
           <DropdownMenuItems
             options={dateOptions}
             updateData={this.updateDateRange}
             selectedItem={dateRange}
           />
-        </ButtonDropdown>
+        </DropdownButton>
         {dateRange === 'custom range' && (
           <DateRangePicker updateState={updateState} />
         )}

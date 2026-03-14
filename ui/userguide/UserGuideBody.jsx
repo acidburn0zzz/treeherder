@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faFileAlt,
@@ -65,6 +65,10 @@ const notations = [
   {
     classes: 'btn-yellow ug-btn-yellow',
     explanation: 'Yellow, unknown',
+  },
+  {
+    classes: 'btn-unscheduled ug-btn-bg',
+    explanation: 'Turquoise, unscheduled',
   },
   {
     classes: 'btn-ltblue ug-btn ug-btn-bg',

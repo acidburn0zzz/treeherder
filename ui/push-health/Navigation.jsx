@@ -1,66 +1,50 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
-import { Badge, Navbar, Nav } from 'reactstrap';
+import { Navbar, Nav } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
 
 import LogoMenu from '../shared/LogoMenu';
-import { getJobsUrl } from '../helpers/url';
 import Login from '../shared/auth/Login';
+import HelpMenu from '../shared/HelpMenu';
 
-import { resultColorMap } from './helpers';
-
-export default class Navigation extends React.PureComponent {
-  render() {
-    const {
-      user,
-      setUser,
-      result,
-      notify,
-      repo,
-      revision,
-      children,
-    } = this.props;
-    const overallResult = result ? resultColorMap[result] : 'none';
-
-    return (
-      <React.Fragment>
-        <Navbar dark color="dark" sticky="top" className="flex-column">
-          <Nav className="w-100 justify-content-between">
-            <LogoMenu menuText="Push Health" />
-            <h4>
-              <Badge color={overallResult}>
-                <a
-                  href={getJobsUrl({ repo, revision })}
-                  className="text-white"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span title="repository">{repo}</span> -
-                  <span title="revision" className="ml-1">
-                    {revision}
-                  </span>
-                </a>
-              </Badge>
-            </h4>
-            <Login user={user} setUser={setUser} notify={notify} />
-          </Nav>
-          {children}
-        </Navbar>
-      </React.Fragment>
-    );
-  }
-}
+const Navigation = ({ user, setUser, notify }) => (
+  <Navbar
+    expand
+    sticky="top"
+    className="top-navbar d-flex justify-content-between"
+    style={{
+      width: '100%',
+      maxWidth: '100vw',
+      paddingLeft: '0.5rem',
+      paddingRight: '0.5rem',
+    }}
+  >
+    <div
+      className="d-flex align-items-center gap-2"
+      style={{ flex: '1 1 auto', minWidth: 0 }}
+    >
+      <LogoMenu menuText="Push Health" />
+      <Nav className="navbar navbar-inverse">
+        <Nav.Item>
+          <Link to="/push-health" className="menu-items nav-link btn-view-nav">
+            My Pushes
+          </Link>
+        </Nav.Item>
+      </Nav>
+    </div>
+    <div
+      className="d-flex align-items-center gap-2"
+      style={{ flex: '0 0 auto' }}
+    >
+      <HelpMenu />
+      <Login user={user} setUser={setUser} notify={notify} />
+    </div>
+  </Navbar>
+);
 
 Navigation.propTypes = {
   user: PropTypes.shape({}).isRequired,
   setUser: PropTypes.func.isRequired,
-  repo: PropTypes.string.isRequired,
-  revision: PropTypes.string.isRequired,
-  notify: PropTypes.func.isRequired,
-  result: PropTypes.string,
-  children: PropTypes.element,
 };
 
-Navigation.defaultProps = {
-  result: '',
-  children: null,
-};
+export default Navigation;

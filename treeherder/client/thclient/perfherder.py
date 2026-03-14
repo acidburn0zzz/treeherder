@@ -49,9 +49,9 @@ class PerformanceSignatureCollection(dict):
             signatures = signatures.filter(('suite', 'tp5o'), ('machine_platform', 'windowsxp'))
         """
         filtered_signatures = {}
-        for (signature, signature_value) in self.items():
+        for signature, signature_value in self.items():
             skip = False
-            for (key, val) in args:
+            for key, val in args:
                 if signature_value.get(key) != val:
                     skip = True
                     break
@@ -92,14 +92,13 @@ class PerformanceSeries(list):
     Represents a series of performance observations
 
     You can access the individual elements of the series by using the []
-    syntax. For example, to get the result set ids and geometric means
-    in a summary series:
+    syntax. For example, to get the geometric means in a summary series:
 
     ::
         pc = PerfherderClient()
         signature = '9cfc271dab9b7fc2c1229736fecfbbc6e7c5fac9'
         series = pc.get_performance_data('mozilla-central', signature=signature)[signature]
-        (result_set_ids, geomeans) = (series['result_set_id'], series['geomean'])
+        geomeans = series['geomean']
     """
 
     def __getitem__(self, key):
@@ -108,9 +107,8 @@ class PerformanceSeries(list):
 
 
 class PerfherderClient(TreeherderClient):
-
-    PERFORMANCE_SIGNATURES_ENDPOINT = 'performance/signatures'
-    PERFORMANCE_DATA_ENDPOINT = 'performance/data'
+    PERFORMANCE_SIGNATURES_ENDPOINT = "performance/signatures"
+    PERFORMANCE_DATA_ENDPOINT = "performance/data"
 
     def get_performance_signatures(self, project, **params):
         """

@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Badge, Button, Row, Col, Input } from 'reactstrap';
+import { Button, Row, Col } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faRedo } from '@fortawesome/free-solid-svg-icons';
 import sortBy from 'lodash/sortBy';
@@ -8,6 +8,7 @@ import sortBy from 'lodash/sortBy';
 import JobModel from '../models/job';
 import { addAggregateFields } from '../helpers/job';
 import { shortDateFormat } from '../helpers/display';
+import SimpleTooltip from '../shared/SimpleTooltip';
 
 import { taskResultColorMap } from './helpers';
 import DetailsPanel from './details/DetailsPanel';
@@ -19,7 +20,6 @@ class PlatformConfig extends React.PureComponent {
     this.state = {
       detailsShowing: false,
       selectedTask: null,
-      isTestSelected: false,
     };
   }
 
@@ -28,35 +28,29 @@ class PlatformConfig extends React.PureComponent {
       selectedJobName,
       selectedTaskId,
       jobs,
-      failure: { jobName, testName },
+      jobName,
+      testName = '',
     } = this.props;
 
     this.setState({
       detailsShowing: selectedJobName === `${testName} ${jobName}`,
       selectedTask: selectedTaskId
-        ? jobs[jobName].filter((job) => job.id === parseInt(selectedTaskId, 10))
-            .length > 0 &&
-          jobs[jobName].filter(
-            (job) => job.id === parseInt(selectedTaskId, 10),
-          )[0]
+        ? jobs.filter((job) => job.id === parseInt(selectedTaskId, 10)).length >
+            0 &&
+          jobs.filter((job) => job.id === parseInt(selectedTaskId, 10))[0]
         : null,
-    });
-  }
-
-  componentWillReceiveProps() {
-    const { selectedTests, failure } = this.props;
-    this.setState({
-      isTestSelected: selectedTests.has(failure),
     });
   }
 
   setSelectedTask = (task) => {
     const { selectedTask } = this.state;
-    const {
-      failure: { jobName, testName },
-    } = this.props;
+    const { jobName, testName = '' } = this.props;
 
     if (selectedTask === task || !task) {
+      this.props.updateParamsAndState({
+        selectedTaskId: '',
+        selectedJobName: '',
+      });
       this.setState({ selectedTask: null, detailsShowing: false });
     } else {
       this.props.updateParamsAndState({
@@ -67,16 +61,6 @@ class PlatformConfig extends React.PureComponent {
     }
   };
 
-  selectTest = (e) => {
-    const { addSelectedTest, removeSelectedTest, failure } = this.props;
-
-    if (e.target.checked) addSelectedTest(failure);
-    else removeSelectedTest(failure);
-    this.setState((prevState) => ({
-      isTestSelected: !prevState.isTestSelected,
-    }));
-  };
-
   retriggerTask = async (task) => {
     const { notify, currentRepo } = this.props;
 
@@ -84,83 +68,62 @@ class PlatformConfig extends React.PureComponent {
   };
 
   render() {
-    const { failure, groupedBy, currentRepo, jobs } = this.props;
-    const {
-      testName,
-      jobName,
-      key,
-      tier,
-      failedInParent,
-      jobGroupSymbol,
-      jobSymbol,
-      isInvestigated,
-    } = failure;
-    const testJobs = jobs[jobName];
-    const { detailsShowing, selectedTask, isTestSelected } = this.state;
-    const taskList = sortBy(testJobs, ['start_time']);
+    const { currentRepo, jobName, jobs, children } = this.props;
+    const { detailsShowing, selectedTask } = this.state;
+
+    const taskList = sortBy(jobs, ['start_time']);
     taskList.forEach((task) => addAggregateFields(task));
 
     return (
       <Row
-        className="ml-5 pt-2 mr-1"
-        key={key}
+        className="ms-5 pt-2 me-1"
+        key={jobName}
         style={{ background: '#f2f2f2' }}
       >
-        <Row className="ml-2 w-100 mb-2 justify-content-between">
-          <Col xs="auto">
-            <Input
-              type="checkbox"
-              checked={isTestSelected}
-              onChange={this.selectTest}
-              title="Select Test"
-            />
-          </Col>
-          <Col>
-            <Row>
-              <span
-                id={key}
-                className={`px-2 text-darker-secondary font-weight-500 ${
-                  isInvestigated && 'investigated'
-                }`}
-              >
-                <span>{groupedBy !== 'path' && `${testName} `}</span>
-                <span>{jobName}</span>
-                {tier > 1 && (
-                  <span className="ml-1 small text-muted">[tier-{tier}]</span>
-                )}
-              </span>
-            </Row>
-          </Col>
-          <Col className="ml-2">
+        <Row className="ms-2 ps-2 w-100 mb-2 justify-content-between">
+          {children}
+          <Col className="ms-2">
             {taskList.map((task, idx) => {
               const { id, result, state, start_time: startTime } = task;
               const isSelected = selectedTask && selectedTask.id === id;
               return (
-                <span key={id} className="mr-3">
-                  <Button
-                    className="py-0"
-                    color={`${taskResultColorMap[result]} ${
-                      !isSelected && 'bg-white bg-hover-grey'
-                    }`}
-                    outline={!isSelected}
-                    size="sm"
-                    onClick={() => this.setSelectedTask(task)}
-                    title={`${
-                      state === 'completed' ? result : state
-                    } - ${jobGroupSymbol}(${jobSymbol}) - ${new Date(
-                      startTime,
-                    ).toLocaleString('en-US', shortDateFormat)}`}
-                  >
-                    task {idx > 0 ? idx + 1 : ''}
-                  </Button>
+                <span key={id} className="me-3">
+                  <SimpleTooltip
+                    text={
+                      <Button
+                        className="py-0"
+                        variant={
+                          !isSelected
+                            ? `outline-${taskResultColorMap[result]}`
+                            : taskResultColorMap[result]
+                        }
+                        size="sm"
+                        onClick={() => this.setSelectedTask(task)}
+                      >
+                        task {idx > 0 ? idx + 1 : ''}
+                      </Button>
+                    }
+                    tooltipText={
+                      <span className="text-nowrap flex">
+                        {`${
+                          state === 'completed' ? result : state
+                        } - ${new Date(startTime).toLocaleString(
+                          'en-US',
+                          shortDateFormat,
+                        )}`}
+                        <br />
+                        Click to see failure lines and artifacts
+                      </span>
+                    }
+                    innerClassName="custom-tooltip-width"
+                  />
                 </span>
               );
             })}
-            {!!failedInParent && <Badge color="info">Failed In Parent</Badge>}
             <Button
               onClick={() => this.retriggerTask(taskList[0])}
-              outline
-              className="mr-2 border-0"
+              variant="outline"
+              className="me-2 border-0"
               title="Retrigger task"
               style={{ lineHeight: '10px' }}
             >
@@ -183,19 +146,10 @@ class PlatformConfig extends React.PureComponent {
 }
 
 PlatformConfig.propTypes = {
-  failure: PropTypes.shape({
-    testName: PropTypes.string.isRequired,
-    jobName: PropTypes.string.isRequired,
-    jobSymbol: PropTypes.string.isRequired,
-    confidence: PropTypes.number.isRequired,
-    platform: PropTypes.string.isRequired,
-    config: PropTypes.string.isRequired,
-    suggestedClassification: PropTypes.string.isRequired,
-    key: PropTypes.string.isRequired,
-  }).isRequired,
+  testName: PropTypes.string,
+  jobName: PropTypes.string.isRequired,
   currentRepo: PropTypes.shape({}).isRequired,
   notify: PropTypes.func.isRequired,
-  groupedBy: PropTypes.string.isRequired,
   updateParamsAndState: PropTypes.func.isRequired,
 };
 

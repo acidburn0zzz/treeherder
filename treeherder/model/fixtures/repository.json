@@ -9,6 +9,7 @@
       "active_status": "active",
       "codebase": "gecko",
       "repository_group": 1,
+      "life_cycle_order": 10,
       "description": "",
       "expire_performance_data": false,
       "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
@@ -21,7 +22,7 @@
       "dvcs_type": "hg",
       "name": "mozilla-inbound",
       "url": "https://hg.mozilla.org/integration/mozilla-inbound",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "gecko",
       "repository_group": 1,
       "description": "",
@@ -85,6 +86,7 @@
       "active_status": "active",
       "codebase": "gecko",
       "repository_group": 2,
+      "life_cycle_order": 100,
       "description": "",
       "performance_alerts_enabled": true,
       "expire_performance_data": false,
@@ -101,6 +103,7 @@
       "active_status": "active",
       "codebase": "gecko",
       "repository_group": 2,
+      "life_cycle_order": 1000,
       "description": "",
       "performance_alerts_enabled": true,
       "expire_performance_data": false,
@@ -312,7 +315,7 @@
       "dvcs_type": "hg",
       "name": "cypress",
       "url": "https://hg.mozilla.org/projects/cypress",
-      "active_status": "onhold",
+      "active_status": "active",
       "codebase": "gecko",
       "repository_group": 6,
       "description": "",
@@ -1038,7 +1041,7 @@
       "dvcs_type": "hg",
       "name": "version-control-tools",
       "url": "https://hg.mozilla.org/hgcustom/version-control-tools",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "version-control-tools",
       "repository_group": 7,
       "description": "Version control infrastructure and tooling.",
@@ -1260,7 +1263,7 @@
       "name": "snippets-service",
       "url": "https://github.com/mozmeao/snippets-service",
       "branch": "master",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "snippets-service",
       "repository_group": 5,
       "description": "Snippets Service",
@@ -1275,7 +1278,7 @@
       "name": "socorro",
       "url": "https://github.com/mozilla-services/socorro",
       "branch": "master",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "socorro",
       "repository_group": 5,
       "description": "Server for collecting, processing, and displaying crash reports from clients using the Breakpad libraries",
@@ -1347,7 +1350,7 @@
       "dvcs_type": "hg",
       "name": "ci-admin",
       "url": "https://hg.mozilla.org/ci/ci-admin",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "ci-admin",
       "repository_group": 9,
       "description": "Administrative scripts for Firefox CI",
@@ -1361,7 +1364,7 @@
       "dvcs_type": "hg",
       "name": "ci-configuration",
       "url": "https://hg.mozilla.org/ci/ci-configuration",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "ci-admin",
       "repository_group": 9,
       "description": "Administrative configuration for Firefox CI",
@@ -1436,13 +1439,14 @@
     "pk": 103,
     "model": "model.repository",
     "fields": {
-      "dvcs_type": "hg",
+      "dvcs_type": "git",
       "name": "taskgraph",
-      "url": "https://hg.mozilla.org/ci/taskgraph",
+      "url": "https://github.com/taskcluster/taskgraph",
+      "branch": "main",
       "active_status": "active",
       "codebase": "taskgraph",
       "repository_group": 9,
-      "description": "Tools for defining graphs fo taskclutser tasks",
+      "description": "Tools for defining graphs for taskclutser tasks",
       "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
     }
   },
@@ -1453,7 +1457,7 @@
       "dvcs_type": "hg",
       "name": "taskgraph-try",
       "url": "https://hg.mozilla.org/ci/taskgraph-try",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "taskgraph",
       "repository_group": 9,
       "description": "Tools for defining graphs fo taskclutser tasks",
@@ -1468,7 +1472,7 @@
       "dvcs_type": "hg",
       "name": "ci-admin-try",
       "url": "https://hg.mozilla.org/ci/ci-admin-try",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "ci-admin",
       "repository_group": 9,
       "description": "Administrative scripts for Firefox CI",
@@ -1482,7 +1486,7 @@
       "dvcs_type": "hg",
       "name": "ci-configuration-try",
       "url": "https://hg.mozilla.org/ci/ci-configuration-try",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "ci-admin",
       "repository_group": 9,
       "description": "Administrative configuration for Firefox CI",
@@ -1511,8 +1515,8 @@
       "dvcs_type": "git",
       "name": "fenix",
       "url": "https://github.com/mozilla-mobile/fenix",
-      "branch": "master",
-      "active_status": "active",
+      "branch": "main",
+      "active_status": "onhold",
       "codebase": "fenix",
       "repository_group": 11,
       "description": "Fenix is not your parent's Android browser",
@@ -1526,7 +1530,7 @@
       "dvcs_type": "hg",
       "name": "mozilla-esr68",
       "url": "https://hg.mozilla.org/releases/mozilla-esr68",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "gecko",
       "repository_group": 2,
       "description": "",
@@ -1540,7 +1544,7 @@
       "dvcs_type": "hg",
       "name": "comm-esr68",
       "url": "https://hg.mozilla.org/releases/comm-esr68",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "comm",
       "repository_group": 8,
       "description": "",
@@ -1554,8 +1558,8 @@
       "dvcs_type": "git",
       "name": "android-components",
       "url": "https://github.com/mozilla-mobile/android-components",
-      "branch": "master",
-      "active_status": "active",
+      "branch": "main",
+      "active_status": "onhold",
       "codebase": "android-components",
       "repository_group": 11,
       "description": "A collection of Android libraries to build browsers or browser-like applications.",
@@ -1569,7 +1573,7 @@
       "dvcs_type": "hg",
       "name": "kaios",
       "url": "https://hg.mozilla.org/projects/kaios",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "kaios",
       "repository_group": 12,
       "description": "",
@@ -1583,7 +1587,7 @@
       "dvcs_type": "hg",
       "name": "kaios-try",
       "url": "https://hg.mozilla.org/projects/kaios-try",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "kaios",
       "repository_group": 12,
       "description": "",
@@ -1597,9 +1601,10 @@
       "dvcs_type": "hg",
       "name": "mozilla-esr78",
       "url": "https://hg.mozilla.org/releases/mozilla-esr78",
-      "active_status": "active",
+      "active_status": "onhold",
       "codebase": "gecko",
       "repository_group": 2,
+      "life_cycle_order": 10000,
       "description": "",
       "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
     }
@@ -1611,10 +1616,435 @@
       "dvcs_type": "hg",
       "name": "comm-esr78",
       "url": "https://hg.mozilla.org/releases/comm-esr78",
+      "active_status": "onhold",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 116,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "mozilla-esr91",
+      "url": "https://hg.mozilla.org/releases/mozilla-esr91",
+      "active_status": "onhold",
+      "codebase": "gecko",
+      "repository_group": 2,
+      "life_cycle_order": 9999,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 117,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-esr91",
+      "url": "https://hg.mozilla.org/releases/comm-esr91",
+      "active_status": "onhold",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 118,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "mozilla-vpn-client",
+      "url": "https://github.com/mozilla-mobile/mozilla-vpn-client",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "mozilla-vpn-client",
+      "repository_group": 7,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 119,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "focus-android",
+      "url": "https://github.com/mozilla-mobile/focus-android",
+      "branch": "main",
+      "active_status": "onhold",
+      "codebase": "focus-android",
+      "repository_group": 11,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 120,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "staging-focus-android",
+      "url": "https://github.com/mozilla-releng/staging-focus-android",
+      "branch": "main",
+      "active_status": "onhold",
+      "codebase": "staging-focus-android",
+      "repository_group": 11,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 121,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "staging-fenix",
+      "url": "https://github.com/mozilla-releng/staging-fenix",
+      "branch": "main",
+      "active_status": "onhold",
+      "codebase": "staging-fenix",
+      "repository_group": 11,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 122,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "mozilla-vpn-client-release",
+      "url": "https://github.com/mozilla-mobile/mozilla-vpn-client",
+      "branch": "releases/2.8",
+      "active_status": "active",
+      "codebase": "mozilla-vpn-client",
+      "repository_group": 7,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 123,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "mozilla-esr102",
+      "url": "https://hg.mozilla.org/releases/mozilla-esr102",
+      "active_status": "onhold",
+      "codebase": "gecko",
+      "repository_group": 2,
+      "life_cycle_order": 9998,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 124,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-esr102",
+      "url": "https://hg.mozilla.org/releases/comm-esr102",
+      "active_status": "onhold",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 125,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "pine-stable",
+      "url": "https://hg.mozilla.org/projects/pine-stable",
+      "active_status": "onhold",
+      "codebase": "gecko",
+      "repository_group": 6,
+      "description": "Stabilization for pine repository",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 126,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "toolchains",
+      "url": "https://hg.mozilla.org/projects/toolchains",
+      "active_status": "active",
+      "codebase": "gecko",
+      "repository_group": 6,
+      "description": "project branch for clang-trunk builds",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 127,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "firefox-android",
+      "url": "https://github.com/mozilla-mobile/firefox-android",
+      "branch": "main",
+      "active_status": "onhold",
+      "codebase": "firefox-android",
+      "repository_group": 11,
+      "performance_alerts_enabled": true,
+      "expire_performance_data": false,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 128,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "staging-android-components",
+      "url": "https://github.com/mozilla-releng/staging-android-components",
+      "branch": "main",
+      "active_status": "onhold",
+      "codebase": "staging-android-components",
+      "repository_group": 11,
+      "description": "staging repository for android-components release engineering",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 129,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "firefox-translations-training",
+      "url": "https://github.com/mozilla/firefox-translations-training",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "firefox-translations-training",
+      "repository_group": 7,
+      "description": "firefox translations training",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 130,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "staging-firefox-translations-training",
+      "url": "https://github.com/mozilla-releng/staging-firefox-translations-training",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "staging-firefox-translations-training",
+      "repository_group": 7,
+      "description": "staging repository for firefox translations training release engineering work",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 131,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "firefox-ios",
+      "url": "https://github.com/mozilla-mobile/firefox-ios",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "firefox-ios",
+      "repository_group": 11,
+      "performance_alerts_enabled": true,
+      "expire_performance_data": false,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 132,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "mozilla-esr115",
+      "url": "https://hg.mozilla.org/releases/mozilla-esr115",
+      "active_status": "active",
+      "codebase": "gecko",
+      "repository_group": 2,
+      "life_cycle_order": 9997,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 133,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-esr115",
+      "url": "https://hg.mozilla.org/releases/comm-esr115",
       "active_status": "active",
       "codebase": "comm",
       "repository_group": 8,
       "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 134,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "application-services",
+      "url": "https://github.com/mozilla/application-services",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "application-services",
+      "repository_group": 11,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 135,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-release",
+      "url": "https://hg.mozilla.org/releases/comm-release",
+      "active_status": "active",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 136,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "mozilla-esr128",
+      "url": "https://hg.mozilla.org/releases/mozilla-esr128",
+      "active_status": "onhold",
+      "codebase": "gecko",
+      "repository_group": 2,
+      "life_cycle_order": 9996,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 137,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-esr128",
+      "url": "https://hg.mozilla.org/releases/comm-esr128",
+      "active_status": "onhold",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 138,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "staging-firefox-ios",
+      "url": "https://github.com/mozilla-mobile/staging-firefox-ios",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "firefox-ios",
+      "repository_group": 11,
+      "performance_alerts_enabled": false,
+      "expire_performance_data": false,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 139,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "mozilla-esr140",
+      "url": "https://hg.mozilla.org/releases/mozilla-esr140",
+      "active_status": "active",
+      "codebase": "gecko",
+      "repository_group": 2,
+      "life_cycle_order": 9995,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 140,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "hg",
+      "name": "comm-esr140",
+      "url": "https://hg.mozilla.org/releases/comm-esr140",
+      "active_status": "active",
+      "codebase": "comm",
+      "repository_group": 8,
+      "description": "",
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 141,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "worker-images",
+      "url": "https://github.com/mozilla-platform-ops/worker-images",
+      "branch": "main",
+      "active_status": "active",
+      "codebase": "worker-images",
+      "repository_group": 9,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 142,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "enterprise-main",
+      "url": "https://github.com/mozilla/enterprise-firefox",
+      "branch": "enterprise-main",
+      "active_status": "active",
+      "codebase": "enterprise-firefox",
+      "repository_group": 13,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 143,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "enterprise-firefox-pr",
+      "url": "https://github.com/mozilla/enterprise-firefox",
+      "branch": "pull request",
+      "active_status": "active",
+      "codebase": "enterprise-firefox",
+      "repository_group": 13,
+      "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
+    }
+  },
+  {
+    "pk": 144,
+    "model": "model.repository",
+    "fields": {
+      "dvcs_type": "git",
+      "name": "enterprise-release",
+      "url": "https://github.com/mozilla/enterprise-firefox",
+      "branch": "enterprise-release",
+      "active_status": "active",
+      "codebase": "enterprise-firefox",
+      "repository_group": 13,
       "tc_root_url": "https://firefox-ci-tc.services.mozilla.com"
     }
   }

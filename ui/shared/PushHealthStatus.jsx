@@ -1,6 +1,6 @@
-import React, { Component } from 'react';
+import { Component } from 'react';
 import PropTypes from 'prop-types';
-import { Badge, Spinner } from 'reactstrap';
+import { Badge } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faCheck,
@@ -22,18 +22,21 @@ class PushHealthStatus extends Component {
   }
 
   async componentDidMount() {
-    const {
-      jobCounts: { completed },
-    } = this.props;
-
-    if (completed > 0) {
-      await this.loadLatestStatus();
-    }
+    // Load health status immediately without waiting for job completion
+    await this.loadLatestStatus();
   }
 
   async componentDidUpdate(prevProps) {
     const { jobCounts } = this.props;
     const fields = ['completed', 'fixedByCommit', 'pending', 'running'];
+
+    // Skip if this is the initial load (all previous counts were zero)
+    const isInitialLoad = !fields.some(
+      (field) => prevProps.jobCounts[field] > 0,
+    );
+    if (isInitialLoad) {
+      return;
+    }
 
     if (didObjectsChange(jobCounts, prevProps.jobCounts, fields)) {
       await this.loadLatestStatus();
@@ -41,15 +44,15 @@ class PushHealthStatus extends Component {
   }
 
   async loadLatestStatus() {
-    const { repoName, revision, statusCallback } = this.props;
+    const { repoName, revision, statusCallback = () => {} } = this.props;
     const { data, failureStatus } = await PushModel.getHealthSummary(
       repoName,
       revision,
     );
 
-    if (!failureStatus) {
-      statusCallback(data);
-      this.setState({ ...data });
+    if (!failureStatus && data.length) {
+      statusCallback(data[0]);
+      this.setState({ ...data[0] });
     }
   }
 
@@ -61,14 +64,14 @@ class PushHealthStatus extends Component {
     } = this.props;
     const { needInvestigation } = this.state;
     let healthStatus = 'In progress';
-    let badgeColor = 'darker-secondary';
+    let badgeColor = 'secondary';
     let extraTitle = 'No errors so far';
     let icon = faClock;
 
     if (completed) {
       if (needInvestigation) {
         healthStatus = `${needInvestigation} ${
-          needInvestigation > 1 ? 'items' : 'item'
+          needInvestigation > 1 ? 'Push Health items' : 'Push Health item'
         }`;
         badgeColor = 'danger';
         extraTitle = 'Needs investigation';
@@ -76,7 +79,7 @@ class PushHealthStatus extends Component {
       }
       const inProgress = pending + running;
       if (!inProgress && !needInvestigation) {
-        healthStatus = `OK`;
+        healthStatus = 'Push Health OK';
         badgeColor = 'success';
         extraTitle = 'Looks good';
         icon = faCheck;
@@ -85,22 +88,22 @@ class PushHealthStatus extends Component {
 
     return (
       <span data-testid={`health-status-${revision}`}>
-        {needInvestigation !== null ? (
+        {needInvestigation !== null && (
           <a
             href={getPushHealthUrl({ repo: repoName, revision })}
             target="_blank"
             rel="noopener noreferrer"
           >
             <Badge
-              color={badgeColor}
+              bg={badgeColor}
+              text="white"
               title={`Push Health status - click for details: ${extraTitle}`}
+              style={{ color: 'white' }}
             >
-              <FontAwesomeIcon className="mr-1" icon={icon} />
+              <FontAwesomeIcon className="me-1" icon={icon} />
               {healthStatus}
             </Badge>
           </a>
-        ) : (
-          <Spinner size="sm" />
         )}
       </span>
     );
@@ -116,10 +119,6 @@ PushHealthStatus.propTypes = {
     completed: PropTypes.number.isRequired,
   }).isRequired,
   statusCallback: PropTypes.func,
-};
-
-PushHealthStatus.defaultProps = {
-  statusCallback: () => {},
 };
 
 export default PushHealthStatus;

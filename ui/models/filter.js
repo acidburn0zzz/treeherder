@@ -16,9 +16,10 @@ import {
   allFilterParams,
 } from '../helpers/filter';
 import { getAllUrlParams } from '../helpers/location';
+import { updateUrlSearch } from '../helpers/router';
 
-export const getNonFilterUrlParams = () =>
-  [...getAllUrlParams().entries()].reduce(
+export const getNonFilterUrlParams = (location) =>
+  [...getAllUrlParams(location).entries()].reduce(
     (acc, [urlField, urlValue]) =>
       allFilterParams.includes(urlField.replace(deprecatedThFilterPrefix, ''))
         ? acc
@@ -26,12 +27,12 @@ export const getNonFilterUrlParams = () =>
     {},
   );
 
-export const getFilterUrlParamsWithDefaults = () => {
+export const getFilterUrlParamsWithDefaults = (location) => {
   // Group multiple values for the same field into an array of values.
   // This handles the transition from our old url params to this newer, more
   // terse version.
   // Also remove usage of the 'filter-' prefix.
-  const groupedValues = [...getAllUrlParams().entries()].reduce(
+  const groupedValues = [...getAllUrlParams(location).entries()].reduce(
     (acc, [urlField, urlValue]) => {
       const field = urlField.replace(deprecatedThFilterPrefix, '');
       if (!allFilterParams.includes(field)) {
@@ -51,8 +52,11 @@ export const getFilterUrlParamsWithDefaults = () => {
 };
 
 export default class FilterModel {
-  constructor() {
-    this.urlParams = getFilterUrlParamsWithDefaults();
+  constructor(navigate, location) {
+    // navigate function from useNavigate hook (or updateUrlSearch for non-hook contexts)
+    this.navigate = navigate;
+    this.location = location;
+    this.urlParams = getFilterUrlParamsWithDefaults(location);
   }
 
   // If a param matches the defaults, then don't include it.
@@ -60,7 +64,7 @@ export default class FilterModel {
     // ensure the repo param is always set
     const params = {
       repo: thDefaultRepo,
-      ...getNonFilterUrlParams(),
+      ...getNonFilterUrlParams(this.location),
       ...this.urlParams,
     };
 
@@ -71,6 +75,16 @@ export default class FilterModel {
           : acc,
       {},
     );
+  };
+
+  pushNavigation = (search) => {
+    if (typeof this.navigate === 'function') {
+      // If navigate is the useNavigate hook function
+      this.navigate({ search });
+    } else {
+      // Fallback to direct URL update
+      updateUrlSearch(search);
+    }
   };
 
   addFilter = (field, value) => {
@@ -86,7 +100,7 @@ export default class FilterModel {
     } else {
       this.urlParams[field] = [value];
     }
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   // Also used for non-filter params
@@ -94,34 +108,33 @@ export default class FilterModel {
     if (value) {
       const currentValue = this.urlParams[field];
 
-      if (currentValue && currentValue.length) {
+      if (currentValue?.length) {
         this.urlParams[field] = currentValue.filter(
           (filterValue) => filterValue !== value,
         );
       }
+
+      if (!this.urlParams[field].length) {
+        delete this.urlParams[field];
+      }
     } else {
       delete this.urlParams[field];
     }
-    this.push();
+
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   getFilterQueryString = () =>
     new URLSearchParams(this.getUrlParamsWithoutDefaults()).toString();
 
-  /**
-   * Push all the url params to the url.  Components listening for hashchange
-   * will get updates.
-   */
-  push = () => {
-    const { origin } = window.location;
-
-    window.location.href = `${origin}/#/jobs?${this.getFilterQueryString()}`;
+  toggleUnscheduledResultStatus = () => {
+    this.toggleResultStatuses(['unscheduled']);
   };
 
   setOnlySuperseded = () => {
     this.urlParams.resultStatus = 'superseded';
     this.urlParams.classifiedState = [...thFilterDefaults.classifiedState];
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   toggleFilter = (field, value) => {
@@ -148,7 +161,7 @@ export default class FilterModel {
       ? currentResultStatuses.filter((rs) => !resultStatuses.includes(rs))
       : [...new Set([...resultStatuses, ...currentResultStatuses])];
 
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   toggleClassifiedFilter = (classifiedState) => {
@@ -161,20 +174,45 @@ export default class FilterModel {
     } else {
       this.urlParams.resultStatus = [...thFailureResults];
       this.urlParams.classifiedState = ['unclassified'];
-      this.push();
+      this.pushNavigation(this.getFilterQueryString());
+    }
+  };
+
+  toggleClassifiedFailures = (showUnclassified = false) => {
+    if (this.isClassifiedFailures(showUnclassified)) {
+      if (showUnclassified) {
+        this.toggleUnclassifiedFailures();
+      } else {
+        this.resetNonFieldFilters();
+      }
+    } else {
+      this.urlParams.resultStatus = [
+        'testfailed',
+        'busted',
+        'exception',
+        'retry',
+        'usercancel',
+      ];
+      if (showUnclassified) {
+        this.urlParams.classifiedState = ['unclassified', 'classified'];
+      } else {
+        this.urlParams.classifiedState = ['classified'];
+      }
+
+      this.pushNavigation(this.getFilterQueryString());
     }
   };
 
   replaceFilter = (field, value) => {
     this.urlParams[field] = !Array.isArray(value) ? [value] : value;
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   clearNonStatusFilters = () => {
     const { repo, resultStatus, classifiedState } = this.urlParams;
 
     this.urlParams = { repo, resultStatus, classifiedState };
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   /**
@@ -187,7 +225,7 @@ export default class FilterModel {
 
     this.urlParams.resultStatus = [...resultStatus];
     this.urlParams.classifiedState = [...classifiedState];
-    this.push();
+    this.pushNavigation(this.getFilterQueryString());
   };
 
   /**
@@ -290,4 +328,22 @@ export default class FilterModel {
   isUnclassifiedFailures = () =>
     arraysEqual(this.urlParams.resultStatus, thFailureResults) &&
     arraysEqual(this.urlParams.classifiedState, ['unclassified']);
+
+  /**
+   * check if we're in the state of showing classified and optionally unclassified failures along with retried & usercancelled
+   */
+  isClassifiedFailures = (showUnclassified = false) =>
+    arraysEqual(this.urlParams.resultStatus, [
+      'testfailed',
+      'busted',
+      'exception',
+      'retry',
+      'usercancel',
+    ]) &&
+    (showUnclassified
+      ? arraysEqual(this.urlParams.classifiedState, [
+          'unclassified',
+          'classified',
+        ])
+      : arraysEqual(this.urlParams.classifiedState, ['classified']));
 }

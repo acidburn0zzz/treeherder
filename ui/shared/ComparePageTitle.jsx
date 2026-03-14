@@ -1,7 +1,7 @@
 import React from 'react';
 import { Helmet } from 'react-helmet';
 import PropTypes from 'prop-types';
-import { Button, Input, InputGroup } from 'reactstrap';
+import { Button, Form, InputGroup } from 'react-bootstrap';
 import { faEdit } from '@fortawesome/free-solid-svg-icons';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 
@@ -19,7 +19,7 @@ export default class ComparePageTitle extends React.Component {
   }
 
   componentDidUpdate(prevProps) {
-    const { pageTitleQueryParam, title } = this.props;
+    const { pageTitleQueryParam = null, title } = this.props;
     if (
       prevProps.pageTitleQueryParam !== pageTitleQueryParam ||
       prevProps.title !== title
@@ -29,7 +29,7 @@ export default class ComparePageTitle extends React.Component {
   }
 
   setPageTitle = () => {
-    const { pageTitleQueryParam, title } = this.props;
+    const { pageTitleQueryParam = null, title } = this.props;
 
     this.setState({
       pageTitle: pageTitleQueryParam || title,
@@ -72,7 +72,7 @@ export default class ComparePageTitle extends React.Component {
   changeQueryParam = (newTitle) => {
     const params = getAllUrlParams();
     params.set('pageTitle', newTitle);
-    replaceLocation(params, '/compare');
+    replaceLocation(params);
   };
 
   userActionListener = async (event) => {
@@ -112,7 +112,7 @@ export default class ComparePageTitle extends React.Component {
           <Button
             className="text-center"
             size="lg"
-            color="white"
+            variant="white"
             onClick={this.goToEditMode}
             title="Click to change the page title"
           >
@@ -126,10 +126,10 @@ export default class ComparePageTitle extends React.Component {
           </Button>
         ) : (
           <InputGroup>
-            <Input
+            <Form.Control
               className="pb-1 col-sm-12 page-title-input"
               ref={this.inputRef}
-              color="white"
+              variant="white"
               style={{
                 textAlign: 'center',
                 fontSize: 'xx-large',
@@ -140,15 +140,15 @@ export default class ComparePageTitle extends React.Component {
               autoFocus
             />
             <Button
-              className="ml-3 my-2"
+              className="ms-3 my-2"
               vertical="center"
               size="lg"
-              color="secondary"
+              variant="secondary"
               onClick={this.injectEnter}
             >
               Save
             </Button>
-            <Button size="lg" color="link" onClick={this.injectEscape}>
+            <Button size="lg" variant="link" onClick={this.injectEscape}>
               Cancel
             </Button>
           </InputGroup>
@@ -161,8 +161,4 @@ export default class ComparePageTitle extends React.Component {
 ComparePageTitle.propTypes = {
   title: PropTypes.string.isRequired,
   pageTitleQueryParam: PropTypes.string,
-};
-
-ComparePageTitle.defaultProps = {
-  pageTitleQueryParam: null,
 };

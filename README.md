@@ -1,11 +1,11 @@
 # Treeherder
 
-[![What's Deployed](https://img.shields.io/badge/whatsdeployed-prototype,stage,prod-green.svg)](https://whatsdeployed.io/s-dqv)
-[![Build Status](https://travis-ci.org/mozilla/treeherder.png?branch=master)](https://travis-ci.org/mozilla/treeherder)
-[![Node dependencies Status](https://david-dm.org/mozilla/treeherder/status.svg)](https://david-dm.org/mozilla/treeherder)
-[![Node devDependencies Status](https://david-dm.org/mozilla/treeherder/dev-status.svg)](https://david-dm.org/mozilla/treeherder?type=dev)
+[![What's Deployed](https://img.shields.io/badge/whatsdeployed-prototype,stage,prod-green.svg)](https://whatsdeployed.io/s/BIY/Mozilla/Treeherder)
+[![Build Status](https://circleci.com/gh/mozilla/treeherder.svg?branch=master&style=shield)](https://app.circleci.com/pipelines/github/mozilla/treeherder)
+![Node dependencies Status](https://shields.io/librariesio/github/mozilla/treeherder)
 [![Documentation Status](https://readthedocs.org/projects/treeherder/badge/?version=latest)](https://treeherder.readthedocs.io/?badge=latest)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
 
 ## Description
 
@@ -37,7 +37,7 @@ If a bug is not assigned to someone, you can request the bug be assigned to you.
 
 If you do not receive a response within 2-3 days, you can follow up in the **#treeherder** matrix channel.
 
-After adressing the issue, make sure [every test passes](https://treeherder.readthedocs.io/testing.html) before sending a pull request.
+After addressing the issue, make sure [every test passes](https://treeherder.readthedocs.io/testing.html) before sending a pull request.
 
 We also recommend setting an `upstream` remote that points to the [Mozilla's Github repo](https://github.com/mozilla/treeherder.git), in addition to `origin` that points to your fork. You should then frequently use `git rebase upstream` rather than merging from your fork to keep your branch current. There are less conflicts this way and the git history is cleaner.
 

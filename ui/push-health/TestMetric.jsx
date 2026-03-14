@@ -15,36 +15,23 @@ export default class TestMetric extends React.PureComponent {
       currentRepo,
       searchStr,
       jobs,
-      showParentMatches,
-      regressionsOrderBy,
-      regressionsGroupBy,
-      knownIssuesOrderBy,
-      knownIssuesGroupBy,
+      regressionsOrderBy = 'count',
+      regressionsGroupBy = 'path',
       updateParamsAndState,
       selectedJobName,
       selectedTaskId,
       selectedTest,
-      testGroup,
+      testGroup = '',
       investigateTest,
       unInvestigateTest,
       updatePushHealth,
     } = this.props;
     const { details } = data;
-    const { needInvestigation, knownIssues } = details;
+    const { needInvestigation } = details;
     let filteredNeedInvestigation = needInvestigation;
-    let filteredKnownIssues = knownIssues;
 
-    if (searchStr.length || !showParentMatches) {
-      filteredNeedInvestigation = filterTests(
-        needInvestigation,
-        searchStr,
-        showParentMatches,
-      );
-      filteredKnownIssues = filterTests(
-        knownIssues,
-        searchStr,
-        showParentMatches,
-      );
+    if (searchStr.length) {
+      filteredNeedInvestigation = filterTests(needInvestigation, searchStr);
     }
 
     return (
@@ -86,41 +73,6 @@ export default class TestMetric extends React.PureComponent {
           }
           updatePushHealth={updatePushHealth}
         />
-        <ClassificationGroup
-          jobs={jobs}
-          tests={filteredKnownIssues}
-          name="Known Issues"
-          repo={repo}
-          currentRepo={currentRepo}
-          revision={revision}
-          className="mb-5"
-          icon={faExclamationTriangle}
-          iconColor={
-            filteredKnownIssues.length ? 'warning' : 'darker-secondary'
-          }
-          expanded={testGroup === 'ki'}
-          testGroup={testGroup}
-          selectedTest={selectedTest}
-          hasRetriggerAll
-          notify={notify}
-          selectedTaskId={selectedTaskId}
-          orderedBy={knownIssuesOrderBy}
-          groupedBy={knownIssuesGroupBy}
-          selectedJobName={selectedJobName}
-          setOrderedBy={(knownIssuesOrderBy) =>
-            updateParamsAndState({ knownIssuesOrderBy, testGroup: 'ki' })
-          }
-          setGroupedBy={(knownIssuesGroupBy) =>
-            updateParamsAndState({ knownIssuesGroupBy, testGroup: 'ki' })
-          }
-          updateParamsAndState={(stateObj) => {
-            stateObj.testGroup = 'ki';
-            updateParamsAndState(stateObj);
-          }}
-          investigateTest={(test) => investigateTest(test, 'knownIssues')}
-          unInvestigateTest={(test) => unInvestigateTest(test, 'knownIssues')}
-          updatePushHealth={updatePushHealth}
-        />
       </div>
     );
   }
@@ -131,8 +83,7 @@ TestMetric.propTypes = {
     name: PropTypes.string.isRequired,
     result: PropTypes.string.isRequired,
     details: PropTypes.shape({
-      needInvestigation: PropTypes.array.isRequired,
-      knownIssues: PropTypes.array.isRequired,
+      needInvestigation: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
     }).isRequired,
   }).isRequired,
   repo: PropTypes.string.isRequired,
@@ -140,19 +91,8 @@ TestMetric.propTypes = {
   revision: PropTypes.string.isRequired,
   notify: PropTypes.func.isRequired,
   searchStr: PropTypes.string.isRequired,
-  showParentMatches: PropTypes.bool.isRequired,
   testGroup: PropTypes.string,
   regressionsOrderBy: PropTypes.string,
   regressionsGroupBy: PropTypes.string,
-  knownIssuesOrderBy: PropTypes.string,
-  knownIssuesGroupBy: PropTypes.string,
   updateParamsAndState: PropTypes.func.isRequired,
-};
-
-TestMetric.defaultProps = {
-  regressionsOrderBy: 'count',
-  regressionsGroupBy: 'path',
-  knownIssuesOrderBy: 'count',
-  knownIssuesGroupBy: 'path',
-  testGroup: '',
 };

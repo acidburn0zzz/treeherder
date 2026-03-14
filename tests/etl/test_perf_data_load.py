@@ -3,10 +3,9 @@ import datetime
 import json
 import operator
 import time
+from unittest import mock
 
 import pytest
-from typing import List
-
 from django.core.management import call_command
 from django.db import IntegrityError
 
@@ -21,73 +20,74 @@ from treeherder.perf.models import (
     PerformanceSignature,
 )
 
-FRAMEWORK_NAME = 'browsertime'
-MEASUREMENT_UNIT = 'ms'
-UPDATED_MEASUREMENT_UNIT = 'seconds'
+FRAMEWORK_NAME = "browsertime"
+MEASUREMENT_UNIT = "ms"
+UPDATED_MEASUREMENT_UNIT = "seconds"
 DATA_PER_ARTIFACT = 8  # related to sample_perf_artifact fixture
 
 
 @pytest.fixture
 def sample_perf_artifact() -> dict:
     return {
-        'job_guid': 'fake_job_guid',
-        'name': 'test',
-        'type': 'test',
-        'blob': {
-            'framework': {'name': FRAMEWORK_NAME},
-            'suites': [
+        "job_guid": "fake_job_guid",
+        "name": "test",
+        "type": "test",
+        "blob": {
+            "framework": {"name": FRAMEWORK_NAME},
+            "suites": [
                 {
-                    'name': 'youtube-watch',
-                    'extraOptions': ['shell', 'e10s'],
-                    'lowerIsBetter': True,
-                    'value': 10.0,
-                    'unit': MEASUREMENT_UNIT,
-                    'subtests': [
+                    "name": "youtube-watch",
+                    "extraOptions": ["shell", "e10s"],
+                    "lowerIsBetter": True,
+                    "value": 10.0,
+                    "unit": MEASUREMENT_UNIT,
+                    "subtests": [
                         {
-                            'name': 'fcp',
-                            'value': 20.0,
-                            'unit': MEASUREMENT_UNIT,
-                            'lowerIsBetter': True,
+                            "name": "fcp",
+                            "value": 20.0,
+                            "unit": MEASUREMENT_UNIT,
+                            "lowerIsBetter": True,
                         },
                         {
-                            'name': 'loadtime',
-                            'value': 30.0,
-                            'unit': MEASUREMENT_UNIT,
-                            'lowerIsBetter': False,
+                            "name": "loadtime",
+                            "value": 30.0,
+                            "unit": MEASUREMENT_UNIT,
+                            "lowerIsBetter": False,
                         },
                         {
-                            'name': 'fnbpaint',
-                            'value': 40.0,
-                            'unit': MEASUREMENT_UNIT,
+                            "name": "fnbpaint",
+                            "value": 40.0,
+                            "unit": MEASUREMENT_UNIT,
                         },
                     ],
                 },
                 {
-                    'name': 'youtube-watch 2',
-                    'lowerIsBetter': False,
-                    'value': 10.0,
-                    'unit': MEASUREMENT_UNIT,
-                    'subtests': [
+                    "name": "youtube-watch 2",
+                    "lowerIsBetter": False,
+                    "value": 10.0,
+                    "unit": MEASUREMENT_UNIT,
+                    "subtests": [
                         {
-                            'name': 'fcp',
-                            'value': 20.0,
-                            'unit': MEASUREMENT_UNIT,
+                            "name": "fcp",
+                            "value": 20.0,
+                            "unit": MEASUREMENT_UNIT,
                         }
                     ],
                 },
                 {
-                    'name': 'youtube-watch 3',
-                    'value': 10.0,
-                    'unit': MEASUREMENT_UNIT,
-                    'subtests': [{'name': 'fcp', 'value': 20.0, 'unit': MEASUREMENT_UNIT}],
+                    "name": "youtube-watch 3",
+                    "value": 10.0,
+                    "unit": MEASUREMENT_UNIT,
+                    "subtests": [{"name": "fcp", "value": 20.0, "unit": MEASUREMENT_UNIT}],
                 },
             ],
+            "logurl": "https://sample.com/perfherder-data.json",
         },
     }
 
 
 @pytest.fixture
-def sibling_perf_artifacts(sample_perf_artifact: dict) -> List[dict]:
+def sibling_perf_artifacts(sample_perf_artifact: dict) -> list[dict]:
     """intended to belong to the same job"""
     artifacts = [copy.deepcopy(sample_perf_artifact) for _ in range(3)]
 
@@ -95,14 +95,14 @@ def sibling_perf_artifacts(sample_perf_artifact: dict) -> List[dict]:
         mocked_push_timestamp = (
             datetime.datetime.utcnow() + datetime.timedelta(hours=idx)
         ).timestamp()
-        artifact['blob']['pushTimestamp'] = int(mocked_push_timestamp)
+        artifact["blob"]["pushTimestamp"] = int(mocked_push_timestamp)
 
         # having distinct values for suites & subtests
         # will make it easier to write tests
-        for suite in artifact['blob']['suites']:
-            suite['value'] = suite['value'] + idx
-            for subtest in suite['subtests']:
-                subtest['value'] = subtest['value'] + idx
+        for suite in artifact["blob"]["suites"]:
+            suite["value"] = suite["value"] + idx
+            for subtest in suite["subtests"]:
+                subtest["value"] = subtest["value"] + idx
 
     return artifacts
 
@@ -110,39 +110,40 @@ def sibling_perf_artifacts(sample_perf_artifact: dict) -> List[dict]:
 @pytest.fixture
 def sample_perf_artifact_with_new_unit():
     return {
-        'job_guid': 'new_fake_job_guid',
-        'name': 'test',
-        'type': 'test',
-        'blob': {
-            'framework': {'name': FRAMEWORK_NAME},
-            'suites': [
+        "job_guid": "new_fake_job_guid",
+        "name": "test",
+        "type": "test",
+        "blob": {
+            "framework": {"name": FRAMEWORK_NAME},
+            "suites": [
                 {
-                    'name': 'youtube-watch',
-                    'extraOptions': ['shell', 'e10s'],
-                    'lowerIsBetter': True,
-                    'value': 10.0,
-                    'unit': UPDATED_MEASUREMENT_UNIT,
-                    'subtests': [
+                    "name": "youtube-watch",
+                    "extraOptions": ["shell", "e10s"],
+                    "lowerIsBetter": True,
+                    "value": 10.0,
+                    "unit": UPDATED_MEASUREMENT_UNIT,
+                    "subtests": [
                         {
-                            'name': 'fcp',
-                            'value': 20.0,
-                            'unit': UPDATED_MEASUREMENT_UNIT,
-                            'lowerIsBetter': True,
+                            "name": "fcp",
+                            "value": 20.0,
+                            "unit": UPDATED_MEASUREMENT_UNIT,
+                            "lowerIsBetter": True,
                         },
                         {
-                            'name': 'loadtime',
-                            'value': 30.0,
-                            'unit': MEASUREMENT_UNIT,
-                            'lowerIsBetter': False,
+                            "name": "loadtime",
+                            "value": 30.0,
+                            "unit": MEASUREMENT_UNIT,
+                            "lowerIsBetter": False,
                         },
                         {
-                            'name': 'fnbpaint',
-                            'value': 40.0,
-                            'unit': MEASUREMENT_UNIT,
+                            "name": "fnbpaint",
+                            "value": 40.0,
+                            "unit": MEASUREMENT_UNIT,
                         },
                     ],
                 }
             ],
+            "logurl": "https://sample.com/perfherder-data.json",
         },
     }
 
@@ -152,8 +153,8 @@ def later_perf_push(test_repository):
     later_timestamp = datetime.datetime.fromtimestamp(int(time.time()) + 5)
     return Push.objects.create(
         repository=test_repository,
-        revision='1234abcd12',
-        author='foo@bar.com',
+        revision="1234abcd12",
+        author="foo@bar.com",
         time=later_timestamp,
     )
 
@@ -170,18 +171,20 @@ def _prepare_test_data(datum):
     PerformanceFramework.objects.get_or_create(name=FRAMEWORK_NAME, enabled=True)
     # the perf data adapter expects unserialized performance data
     submit_datum = copy.copy(datum)
-    submit_datum['blob'] = json.dumps({'performance_data': submit_datum['blob']})
-    perf_datum = datum['blob']
+    blob_data = {"performance_data": submit_datum["blob"]}
+    blob_data["logurl"] = submit_datum["blob"]["logurl"]
+    submit_datum["blob"] = json.dumps(blob_data)
+    perf_datum = datum["blob"]
     return perf_datum, submit_datum
 
 
 def _assert_hash_remains_unchanged():
-    summary_signature = PerformanceSignature.objects.get(suite='youtube-watch', test='')
+    summary_signature = PerformanceSignature.objects.get(suite="youtube-watch", test="")
     # Ensure we don't inadvertently change the way we generate signature hashes.
-    assert summary_signature.signature_hash == '78aaeaf7d3a0170f8a1fb0c4dc34ca276da47e1c'
+    assert summary_signature.signature_hash == "78aaeaf7d3a0170f8a1fb0c4dc34ca276da47e1c"
     subtest_signatures = PerformanceSignature.objects.filter(
         parent_signature=summary_signature
-    ).values_list('signature_hash', flat=True)
+    ).values_list("signature_hash", flat=True)
     assert len(subtest_signatures) == 3
 
 
@@ -205,35 +208,81 @@ def test_default_ingest_workflow(
     assert 1 == PerformanceFramework.objects.all().count()
     framework = PerformanceFramework.objects.first()
     assert FRAMEWORK_NAME == framework.name
-    for suite in perf_datum['suites']:
+    for suite in perf_datum["suites"]:
         # verify summary, then subtests
         _verify_signature(
             test_repository.name,
-            perf_datum['framework']['name'],
-            suite['name'],
-            '',
-            'my_option_hash',
-            'my_platform',
-            suite.get('lowerIsBetter', True),
-            suite.get('extraOptions'),
-            suite.get('unit'),
+            perf_datum["framework"]["name"],
+            suite["name"],
+            "",
+            "my_option_hash",
+            "my_platform",
+            suite.get("lowerIsBetter", True),
+            suite.get("extraOptions"),
+            suite.get("unit"),
             perf_push.time,
         )
-        _verify_datum(suite['name'], '', suite['value'], perf_push.time)
-        for subtest in suite['subtests']:
+        _verify_datum(suite["name"], "", suite["value"], perf_push.time)
+        for subtest in suite["subtests"]:
             _verify_signature(
                 test_repository.name,
-                perf_datum['framework']['name'],
-                suite['name'],
-                subtest['name'],
-                'my_option_hash',
-                'my_platform',
-                subtest.get('lowerIsBetter', True),
-                suite.get('extraOptions'),
-                suite.get('unit'),
+                perf_datum["framework"]["name"],
+                suite["name"],
+                subtest["name"],
+                "my_option_hash",
+                "my_platform",
+                subtest.get("lowerIsBetter", True),
+                suite.get("extraOptions"),
+                suite.get("unit"),
                 perf_push.time,
             )
-            _verify_datum(suite['name'], subtest['name'], subtest['value'], perf_push.time)
+            _verify_datum(suite["name"], subtest["name"], subtest["value"], perf_push.time)
+
+
+@mock.patch("treeherder.etl.perf.generate_alerts")
+def test_monitored_perf_data(
+    mocked_generate_alerts,
+    test_repository,
+    perf_push,
+    later_perf_push,
+    perf_job_nonsheriffed,
+    generic_reference_data,
+    sample_perf_artifact,
+):
+    for suite in sample_perf_artifact["blob"]["suites"]:
+        suite["monitor"] = True
+    perf_datum, submit_datum = _prepare_test_data(sample_perf_artifact)
+
+    store_performance_artifact(perf_job_nonsheriffed, submit_datum)
+
+    assert DATA_PER_ARTIFACT == PerformanceSignature.objects.all().count()
+    assert 1 == PerformanceFramework.objects.all().count()
+
+    # Ensure that alert generation gets triggered on a tier-3 test with
+    # monitor set to True
+    mocked_generate_alerts.apply_async.assert_called()
+
+
+@mock.patch("treeherder.etl.perf.generate_alerts")
+def test_unmonitored_perf_data(
+    mocked_generate_alerts,
+    test_repository,
+    perf_push,
+    later_perf_push,
+    perf_job_nonsheriffed,
+    generic_reference_data,
+    sample_perf_artifact,
+):
+    perf_datum, submit_datum = _prepare_test_data(sample_perf_artifact)
+
+    store_performance_artifact(perf_job_nonsheriffed, submit_datum)
+
+    assert DATA_PER_ARTIFACT == PerformanceSignature.objects.all().count()
+    assert 1 == PerformanceFramework.objects.all().count()
+
+    # Ensure that alert generation does not get triggered when monitor is False
+    # on a tier-3 job
+    mocked_generate_alerts.apply_async.assert_not_called()
 
 
 def test_hash_remains_unchanged_for_default_ingestion_workflow(
@@ -253,11 +302,11 @@ def test_timestamp_can_be_updated_for_default_ingestion_workflow(
 
     # send another datum, a little later, verify that signature is changed accordingly
     later_job = create_generic_job(
-        'lateguid', test_repository, later_perf_push.id, generic_reference_data
+        "lateguid", test_repository, later_perf_push.id, generic_reference_data
     )
     store_performance_artifact(later_job, submit_datum)
 
-    signature = PerformanceSignature.objects.get(suite='youtube-watch', test='fcp')
+    signature = PerformanceSignature.objects.get(suite="youtube-watch", test="fcp")
     assert signature.last_updated == later_perf_push.time
 
 
@@ -274,19 +323,19 @@ def test_measurement_unit_can_be_updated(
 
     _, updated_submit_datum = _prepare_test_data(sample_perf_artifact_with_new_unit)
     later_job = create_generic_job(
-        'lateguid', test_repository, later_perf_push.id, generic_reference_data
+        "lateguid", test_repository, later_perf_push.id, generic_reference_data
     )
     store_performance_artifact(later_job, updated_submit_datum)
 
-    summary_signature = PerformanceSignature.objects.get(suite='youtube-watch', test='')
-    updated_subtest_signature = PerformanceSignature.objects.get(suite='youtube-watch', test='fcp')
+    summary_signature = PerformanceSignature.objects.get(suite="youtube-watch", test="")
+    updated_subtest_signature = PerformanceSignature.objects.get(suite="youtube-watch", test="fcp")
     assert summary_signature.measurement_unit == UPDATED_MEASUREMENT_UNIT
     assert updated_subtest_signature.measurement_unit == UPDATED_MEASUREMENT_UNIT
 
     # no side effects when parent/sibling signatures
     # change measurement units
     not_changed_subtest_signature = PerformanceSignature.objects.get(
-        suite='youtube-watch', test='loadtime'
+        suite="youtube-watch", test="loadtime"
     )
     assert not_changed_subtest_signature.measurement_unit == MEASUREMENT_UNIT
 
@@ -295,9 +344,9 @@ def test_changing_extra_options_decouples_perf_signatures(
     test_repository, later_perf_push, perf_job, generic_reference_data, sample_perf_artifact
 ):
     updated_perf_artifact = copy.deepcopy(sample_perf_artifact)
-    updated_perf_artifact['blob']['suites'][0]['extraOptions'] = ['different-extra-options']
+    updated_perf_artifact["blob"]["suites"][0]["extraOptions"] = ["different-extra-options"]
     later_job = create_generic_job(
-        'lateguid', test_repository, later_perf_push.id, generic_reference_data
+        "lateguid", test_repository, later_perf_push.id, generic_reference_data
     )
     _, submit_datum = _prepare_test_data(sample_perf_artifact)
     _, updated_submit_datum = _prepare_test_data(updated_perf_artifact)
@@ -312,15 +361,15 @@ def test_changing_extra_options_decouples_perf_signatures(
 
 
 # Multi perf data (for the same job) ingestion workflow
-@pytest.mark.parametrize('PERFHERDER_ENABLE_MULTIDATA_INGESTION', [True, False])
+@pytest.mark.parametrize("perfherder_enable_multidata_ingestion", [True, False])
 def test_multi_data_can_be_ingested_for_same_job_and_push(
-    PERFHERDER_ENABLE_MULTIDATA_INGESTION,
+    perfherder_enable_multidata_ingestion,
     test_repository,
     perf_job,
     sibling_perf_artifacts,
     settings,
 ):
-    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = PERFHERDER_ENABLE_MULTIDATA_INGESTION
+    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = perfherder_enable_multidata_ingestion
 
     try:
         for artifact in sibling_perf_artifacts:
@@ -331,11 +380,11 @@ def test_multi_data_can_be_ingested_for_same_job_and_push(
 
 
 @pytest.mark.parametrize(
-    'PERFHERDER_ENABLE_MULTIDATA_INGESTION, based_on_multidata_toggle',
+    "perfherder_enable_multidata_ingestion, based_on_multidata_toggle",
     [(True, operator.truth), (False, operator.not_)],
 )
 def test_multi_data_ingest_workflow(
-    PERFHERDER_ENABLE_MULTIDATA_INGESTION,
+    perfherder_enable_multidata_ingestion,
     based_on_multidata_toggle,
     test_repository,
     perf_push,
@@ -348,7 +397,7 @@ def test_multi_data_ingest_workflow(
     """
     Assumes the job has multiple PERFHERDER_DATA record in the same log
     """
-    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = PERFHERDER_ENABLE_MULTIDATA_INGESTION
+    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = perfherder_enable_multidata_ingestion
 
     def performance_datum_exists(**with_these_properties) -> bool:
         return based_on_multidata_toggle(
@@ -376,8 +425,8 @@ def test_multi_data_ingest_workflow(
 
     # and their essential properties were correctly stored (or not)
     for artifact in sibling_perf_artifacts:
-        artifact_blob = artifact['blob']
-        push_timestamp = datetime.datetime.fromtimestamp(artifact_blob['pushTimestamp'])
+        artifact_blob = artifact["blob"]
+        push_timestamp = datetime.datetime.fromtimestamp(artifact_blob["pushTimestamp"])
         common_properties = dict(  # to both suites & subtests
             repository=perf_job.repository,
             job=perf_job,
@@ -385,29 +434,29 @@ def test_multi_data_ingest_workflow(
             push_timestamp=push_timestamp,
         )
         # check suites
-        for suite in artifact_blob['suites']:
+        for suite in artifact_blob["suites"]:
             assert performance_datum_exists(
                 **common_properties,
-                value=suite['value'],
+                value=suite["value"],
             )
 
             # and subtests
-            for subtest in suite['subtests']:
+            for subtest in suite["subtests"]:
                 assert performance_datum_exists(
                     **common_properties,
-                    value=subtest['value'],
+                    value=subtest["value"],
                 )
 
 
-@pytest.mark.parametrize('PERFHERDER_ENABLE_MULTIDATA_INGESTION', [True, False])
+@pytest.mark.parametrize("perfherder_enable_multidata_ingestion", [True, False])
 def test_hash_remains_unchanged_for_multi_data_ingestion_workflow(
-    PERFHERDER_ENABLE_MULTIDATA_INGESTION,
+    perfherder_enable_multidata_ingestion,
     test_repository,
     perf_job,
     sibling_perf_artifacts,
     settings,
 ):
-    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = PERFHERDER_ENABLE_MULTIDATA_INGESTION
+    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = perfherder_enable_multidata_ingestion
 
     for artifact in sibling_perf_artifacts:
         _, submit_datum = _prepare_test_data(artifact)
@@ -417,10 +466,10 @@ def test_hash_remains_unchanged_for_multi_data_ingestion_workflow(
 
 
 @pytest.mark.parametrize(
-    'PERFHERDER_ENABLE_MULTIDATA_INGESTION, operator_', [(True, operator.eq), (False, operator.ne)]
+    "perfherder_enable_multidata_ingestion, operator_", [(True, operator.eq), (False, operator.ne)]
 )
 def test_timestamp_can_be_updated_for_multi_data_ingestion_workflow(
-    PERFHERDER_ENABLE_MULTIDATA_INGESTION,
+    perfherder_enable_multidata_ingestion,
     operator_,
     test_repository,
     perf_job,
@@ -429,15 +478,15 @@ def test_timestamp_can_be_updated_for_multi_data_ingestion_workflow(
     sibling_perf_artifacts,
     settings,
 ):
-    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = PERFHERDER_ENABLE_MULTIDATA_INGESTION
+    settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = perfherder_enable_multidata_ingestion
 
     for artifact in sibling_perf_artifacts:
         _, submit_datum = _prepare_test_data(artifact)
         store_performance_artifact(perf_job, submit_datum)
 
-    signature = PerformanceSignature.objects.get(suite='youtube-watch', test='fcp')
+    signature = PerformanceSignature.objects.get(suite="youtube-watch", test="fcp")
     last_artifact = sibling_perf_artifacts[-1]
-    last_push_timestamp = datetime.datetime.fromtimestamp(last_artifact['blob']['pushTimestamp'])
+    last_push_timestamp = datetime.datetime.fromtimestamp(last_artifact["blob"]["pushTimestamp"])
 
     assert operator_(signature.last_updated, last_push_timestamp)
 
@@ -452,8 +501,8 @@ def test_multi_commit_data_is_removed_by_dedicated_management_script(
     settings,
 ):
     settings.PERFHERDER_ENABLE_MULTIDATA_INGESTION = True
-    sibling_perf_artifacts[0]['blob'].pop(
-        'pushTimestamp'
+    sibling_perf_artifacts[0]["blob"].pop(
+        "pushTimestamp"
     )  # assume 1st PERFORMANCE_DATA is ingested in the old way
 
     # ingest all perf_data
@@ -469,7 +518,7 @@ def test_multi_commit_data_is_removed_by_dedicated_management_script(
         == (len(sibling_perf_artifacts) - 1) * DATA_PER_ARTIFACT
     )
 
-    call_command('remove_multi_commit_data')
+    call_command("remove_multi_commit_data")
     assert MultiCommitDatum.objects.all().count() == 0
     assert (
         PerformanceDatum.objects.all().count() == DATA_PER_ARTIFACT

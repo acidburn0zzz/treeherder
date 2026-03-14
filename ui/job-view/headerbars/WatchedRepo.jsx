@@ -10,18 +10,12 @@ import {
   faTimes,
   faTimesCircle,
 } from '@fortawesome/free-solid-svg-icons';
-import {
-  ButtonGroup,
-  Button,
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { Button, Dropdown } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
 
-import TreeStatusModel from '../../models/treeStatus';
+import TreeStatusModel, { treeStatusUiUrl } from '../../models/treeStatus';
 import BugLinkify from '../../shared/BugLinkify';
-import { getRepoUrl } from '../../helpers/location';
+import { updateRepoParams } from '../../helpers/location';
 
 const statusInfoMap = {
   open: {
@@ -87,7 +81,7 @@ export default class WatchedRepo extends React.Component {
     clearInterval(this.treeStatusIntervalId);
   }
 
-  updateTreeStatus = () => {
+  updateTreeStatus = (mustBeCurrentRepo = false) => {
     const { repo, repoName, setCurrentRepoTreeStatus } = this.props;
     const watchedRepoName = repo.name;
 
@@ -100,12 +94,13 @@ export default class WatchedRepo extends React.Component {
         messageOfTheDay: '',
         statusInfo: statusInfoMap.unsupported,
       });
+      setCurrentRepoTreeStatus('unsupported');
       clearInterval(this.treeStatusIntervalId);
     } else {
       TreeStatusModel.get(watchedRepoName).then((data) => {
         const treeStatus = data.result;
 
-        if (watchedRepoName === repoName) {
+        if (mustBeCurrentRepo || watchedRepoName === repoName) {
           setCurrentRepoTreeStatus(treeStatus.status);
         }
 
@@ -130,15 +125,15 @@ export default class WatchedRepo extends React.Component {
     const activeClass = watchedRepo === repoName ? 'active' : '';
     const { btnClass, icon, color } = statusInfo;
     const pulseIcon = statusInfo.pulseIcon || null;
-    const changeRepoUrl = getRepoUrl(watchedRepo);
 
     return (
-      <ButtonGroup>
-        <Button
-          href={changeRepoUrl}
-          className={`btn-view-nav ${btnClass} ${activeClass}`}
+      <div className="btn-group" role="group">
+        <Link
+          to={{
+            search: updateRepoParams(watchedRepo),
+          }}
+          className={`btn btn-sm btn-view-nav ${btnClass} ${activeClass} btn-watched-repo`}
           title={status}
-          size="sm"
         >
           <FontAwesomeIcon
             icon={icon}
@@ -147,14 +142,14 @@ export default class WatchedRepo extends React.Component {
             pulse={pulseIcon}
           />{' '}
           {watchedRepo}
-        </Button>
-        <UncontrolledDropdown>
-          <DropdownToggle className={`btn-view-nav ${activeClass}`}>
+        </Link>
+        <Dropdown>
+          <Dropdown.Toggle className={`btn-view-nav ${activeClass} no-caret`}>
             <FontAwesomeIcon
               icon={faInfoCircle}
               title={`${watchedRepo} info`}
             />
-          </DropdownToggle>
+          </Dropdown.Toggle>
           {watchedRepo !== repoName && (
             <Button
               className={`btn-view-nav ${activeClass}`}
@@ -167,56 +162,56 @@ export default class WatchedRepo extends React.Component {
               />
             </Button>
           )}
-          <DropdownMenu>
+          <Dropdown.Menu>
             {status === 'unsupported' && (
               <React.Fragment>
-                <DropdownItem
+                <Dropdown.Item
                   tag="a"
-                  href="https://mozilla-releng.net/treestatus"
+                  href={`${treeStatusUiUrl()}`}
                   target="_blank"
                   rel="noopener noreferrer"
                 >
                   {watchedRepo} is not listed on Tree Status
-                </DropdownItem>
-                <DropdownItem divider />
+                </Dropdown.Item>
+                <Dropdown.Divider />
               </React.Fragment>
             )}
             {!!reason && (
               <React.Fragment>
-                <DropdownItem tag="a">
+                <Dropdown.Item tag="a">
                   <BugLinkify>{reason}</BugLinkify>
-                </DropdownItem>
-                <DropdownItem divider />
+                </Dropdown.Item>
+                <Dropdown.Divider />
               </React.Fragment>
             )}
 
             {!!messageOfTheDay && (
               <React.Fragment>
-                <DropdownItem tag="a">
+                <Dropdown.Item tag="a">
                   <BugLinkify>{messageOfTheDay}</BugLinkify>
-                </DropdownItem>
-                <DropdownItem divider />
+                </Dropdown.Item>
+                <Dropdown.Divider />
               </React.Fragment>
             )}
-            <DropdownItem
+            <Dropdown.Item
               tag="a"
-              href={`https://treestatus.mozilla-releng.net/static/ui/treestatus/show/${watchedRepo}`}
+              href={`${treeStatusUiUrl()}${watchedRepo}`}
               target="_blank"
               rel="noopener noreferrer"
             >
               Tree Status
-            </DropdownItem>
-            <DropdownItem
+            </Dropdown.Item>
+            <Dropdown.Item
               tag="a"
               href={repo.pushLogUrl}
               target="_blank"
               rel="noopener noreferrer"
             >
               Pushlog
-            </DropdownItem>
-          </DropdownMenu>
-        </UncontrolledDropdown>
-      </ButtonGroup>
+            </Dropdown.Item>
+          </Dropdown.Menu>
+        </Dropdown>
+      </div>
     );
   }
 }

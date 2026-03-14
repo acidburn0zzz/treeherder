@@ -1,44 +1,62 @@
-/* eslint-disable react/no-did-update-set-state */
-
 import React from 'react';
 import PropTypes from 'prop-types';
-import {
-  Button,
-  FormGroup,
-  Input,
-  Label,
-  Badge,
-  UncontrolledTooltip,
-} from 'reactstrap';
+import { Button, Form, Badge } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faStar as faStarSolid,
   faUser,
   faCheck,
+  faChartLine,
+  faCirclePlay,
+  faFire,
+  faPlus,
 } from '@fortawesome/free-solid-svg-icons';
 import { faStar as faStarRegular } from '@fortawesome/free-regular-svg-icons';
+import { Link } from 'react-router-dom';
 
-import { createQueryParams } from '../../helpers/url';
-import { getStatus, getGraphsURL, modifyAlert, formatNumber } from '../helpers';
+import { getPerfCompareBaseSubtestsURL } from '../../helpers/url';
+import {
+  getStatus,
+  getGraphsURL,
+  modifyAlert,
+  formatNumber,
+  getFrameworkName,
+  getTimeRange,
+  getSideBySideLink,
+} from '../perf-helpers/helpers';
 import SimpleTooltip from '../../shared/SimpleTooltip';
-import ProgressBar from '../../shared/ProgressBar';
 import {
   alertStatusMap,
+  alertBackfillResultStatusMap,
+  alertBackfillResultVisual,
   backfillRetriggeredTitle,
-  phDefaultTimeRangeValue,
-  phTimeRanges,
-} from '../constants';
+  noiseProfiles,
+  browsertimeId,
+  browsertimeEssentialTests,
+  browsertimeBenchmarksTests,
+} from '../perf-helpers/constants';
+import { Perfdocs } from '../perf-helpers/perfdocs';
+
+import AlertTablePlatform from './AlertTablePlatform';
+import AlertTableTagsOptions from './AlertTableTagsOptions';
+import Magnitude from './Magnitude';
+import BadgeTooltip from './BadgeTooltip';
 
 export default class AlertTableRow extends React.Component {
   constructor(props) {
     super(props);
-    const { tags } = this.props.alert.series_signature;
+    const { alert } = this.props;
     this.state = {
-      starred: this.props.alert.starred,
+      starred: alert.starred,
       checkboxSelected: false,
-      displayAllTags: false,
-      tags,
+      icons: [],
     };
+  }
+
+  componentDidMount() {
+    const { alert } = this.props;
+
+    this.showCriticalMagnitudeIcons(alert);
   }
 
   componentDidUpdate(prevProps) {
@@ -57,38 +75,24 @@ export default class AlertTableRow extends React.Component {
     }
   }
 
-  getTimeRange = () => {
-    const { alertSummary } = this.props;
-
-    const defaultTimeRange =
-      alertSummary.repository === 'mozilla-beta'
-        ? 7776000
-        : phDefaultTimeRangeValue;
-    const timeRange = Math.max(
-      defaultTimeRange,
-      phTimeRanges
-        .map((time) => time.value)
-        .find(
-          (value) => Date.now() / 1000.0 - alertSummary.push_timestamp <= value,
-        ),
-    );
-    // default value of one year, for one a push_timestamp exceeds the one year value slightly
-    return timeRange || 31536000;
-  };
-
   toggleStar = async () => {
     const { starred } = this.state;
-    const { alert } = this.props;
+    const {
+      alert,
+      fetchAlertSummaries,
+      alertSummary,
+      modifyAlert: modifyAlertFn = modifyAlert,
+    } = this.props;
     const updatedStar = {
       starred: !starred,
     };
     // passed as prop only for testing purposes
-    const { data, failureStatus } = await this.props.modifyAlert(
-      alert,
-      updatedStar,
-    );
+    const { data, failureStatus } = await modifyAlertFn(alert, updatedStar);
 
-    if (failureStatus) {
+    if (!failureStatus) {
+      // now refresh UI, by syncing with backend
+      fetchAlertSummaries(alertSummary.id);
+    } else {
       return this.props.updateViewState({
         errorMessages: [`Failed to update alert ${alert.id}: ${data}`],
       });
@@ -107,11 +111,12 @@ export default class AlertTableRow extends React.Component {
     return (
       <span>
         {` ${text} `}
-        <a
-          href={`#/alerts?id=${alertId}`}
+        <Link
+          to={`./alerts?id=${alertId}`}
+          target="_blank"
           rel="noopener noreferrer"
           className="text-darker-info"
-        >{`alert #${alertId}`}</a>
+        >{`alert #${alertId}`}</Link>
       </span>
     );
   };
@@ -139,20 +144,50 @@ export default class AlertTableRow extends React.Component {
       <React.Fragment>
         (
         {statusColor === 'text-success' && (
-          <FontAwesomeIcon icon={faCheck} color="#28a745" />
-        )}{' '}
+          <FontAwesomeIcon icon={faCheck} variant="#28a745" />
+        )}
         <span className={statusColor}>{alertStatus}</span>
-        {alert.related_summary_id && this.getReassignment(alert)}
-        {alert.backfill_record ? (
-          <span className="text-darker-info">, important</span>
-        ) : null}
-        )
+        {alert.related_summary_id && this.getReassignment(alert)})
       </React.Fragment>
     );
   };
 
+  getBackfillStatusInfo = (alert) => {
+    if (!alert.backfill_record || alert.backfill_record.status === undefined)
+      return null;
+    const statusesToDisplayTasksCount = ['backfilled', 'successful', 'failed'];
+    const backfillStatus = getStatus(
+      alert.backfill_record.status,
+      alertBackfillResultStatusMap,
+    );
+
+    const alertBackfillStatus = alertBackfillResultVisual[backfillStatus];
+    // Added only for testing locally the UI changes
+    // To be removed once this is in production
+    alertBackfillStatus.backfillsFailed =
+      alert.backfill_record.total_backfills_failed || 0;
+    alertBackfillStatus.backfillsSuccessful =
+      alert.backfill_record.total_backfills_successful || 0;
+    alertBackfillStatus.backfillsInProgress =
+      alert.backfill_record.total_backfills_in_progress || 0;
+
+    if (
+      statusesToDisplayTasksCount.includes(backfillStatus) &&
+      // the next checks are here to not confuse users
+      // since we won't have count for tasks right away
+      // to be removed after changes are in prod
+      (alertBackfillStatus.backfillsFailed !== 0 ||
+        alertBackfillStatus.backfillsInProgress !== 0 ||
+        alertBackfillStatus.backfillsSuccessful !== 0)
+    )
+      alertBackfillStatus.displayTasksCount = true;
+
+    return alertBackfillStatus;
+  };
+
   getTitleText = (alert, alertStatus) => {
-    const { repository, framework, id } = this.props.alertSummary;
+    const { framework, id } = this.props.alertSummary;
+    const { frameworks } = this.props;
 
     let statusColor = '';
     let textEffect = '';
@@ -160,7 +195,7 @@ export default class AlertTableRow extends React.Component {
       statusColor = 'text-danger';
     }
     if (alertStatus === 'untriaged') {
-      statusColor = 'text-success';
+      statusColor = 'text-warning';
     }
     if (
       alertStatus === 'invalid' ||
@@ -168,83 +203,57 @@ export default class AlertTableRow extends React.Component {
     ) {
       textEffect = 'strike-through';
     }
-    const timeRange = this.getTimeRange();
+    const frameworkName = getFrameworkName(frameworks, framework);
+    const { title } = alert;
+    const { suite, test, machine_platform: platform } = alert.series_signature;
+    const perfdocs = new Perfdocs(frameworkName, suite, platform, title);
+    const hasDocumentation = perfdocs.hasDocumentation();
+    const duplicatedName = suite === test;
+
     return (
-      <span>
-        <span
-          className={textEffect}
+      <div className="alert-title-container">
+        <div
+          className={`alert-title ${textEffect}`}
           id={`alert ${alert.id} title`}
           title={alert.backfill_record ? backfillRetriggeredTitle : ''}
         >
-          {alert.title}
-        </span>{' '}
-        {this.renderAlertStatus(alert, alertStatus, statusColor)}
-        <span className="result-links">
-          <a
-            href={getGraphsURL(alert, timeRange, repository, framework)}
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            {' '}
-            graph
-          </a>
-          {alert.series_signature.has_subtests && (
-            <a
-              href={this.getSubtestsURL()}
-              target="_blank"
-              rel="noopener noreferrer"
+          {hasDocumentation && alert.title ? (
+            <span
+              className="alert-docs"
+              data-testid={`alert ${alert.id} title`}
             >
-              {' '}
-              · subtests
-            </a>
-          )}
-        </span>
-      </span>
-    );
-  };
-
-  showTags = (tags) => {
-    return tags.map((item) => (
-      <Badge color="light" key={`${item}`} data-testid="alert-tag">
-        {item}
-      </Badge>
-    ));
-  };
-
-  getTags = (alert) => {
-    const { displayAllTags, tags } = this.state;
-    const visibleTags = 2;
-
-    if (tags.length && tags[0] !== '') {
-      return (
-        <React.Fragment>
-          {this.showTags(tags.slice(0, visibleTags))}
-          {!displayAllTags && tags.length > visibleTags && (
-            <Button
-              color="link"
-              size="sm"
-              id={`alert-${alert.id}-tags`}
-              onClick={() =>
-                this.setState((prevState) => ({
-                  displayAllTags: !prevState.displayAllTags,
-                }))
-              }
-            >
-              <span>...</span>
-              <UncontrolledTooltip
-                placement="top"
-                target={`alert-${alert.id}-tags`}
+              <a
+                data-testid="docs"
+                href={perfdocs.documentationURL}
+                target="_blank"
+                rel="noopener noreferrer"
               >
-                Show more tags
-              </UncontrolledTooltip>
-            </Button>
+                {suite}
+              </a>{' '}
+              {!duplicatedName && test}
+            </span>
+          ) : (
+            <span data-testid={`alert ${alert.id} title`}>
+              {suite} {!duplicatedName && test}
+            </span>
           )}
-          {displayAllTags && this.showTags(tags.slice(visibleTags))}
-        </React.Fragment>
-      );
-    }
-
-    return <Badge color="light">No tags</Badge>;
+        </div>
+        <div>
+          {this.renderAlertStatus(alert, alertStatus, statusColor)}{' '}
+          <span className="result-links">
+            {alert.series_signature.has_subtests && (
+              <a
+                href={this.getSubtestsURL()}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                · subtests
+              </a>
+            )}
+          </span>
+        </div>
+      </div>
+    );
   };
 
   // arbitrary scale from 0-20% multiplied by 5, capped
@@ -253,57 +262,193 @@ export default class AlertTableRow extends React.Component {
 
   getSubtestsURL = () => {
     const { alert, alertSummary } = this.props;
-    const urlParameters = {
-      framework: alertSummary.framework,
-      originalProject: alertSummary.repository,
-      originalSignature: alert.series_signature.id,
-      newProject: alertSummary.repository,
-      newSignature: alert.series_signature.id,
-      originalRevision: alertSummary.prev_push_revision,
-      newRevision: alertSummary.revision,
-    };
 
-    return `#/comparesubtest${createQueryParams(urlParameters)}`;
+    return getPerfCompareBaseSubtestsURL(
+      alertSummary.repository,
+      alertSummary.prev_push_revision,
+      alertSummary.repository,
+      alertSummary.revision,
+      alertSummary.framework,
+      alert.series_signature.id,
+      alert.series_signature.id,
+    );
   };
 
+  buildSideBySideLink = () => {
+    const { alert, alertSummary } = this.props;
+    const platform = alert.series_signature.machine_platform;
+    const { suite } = alert.series_signature;
+    let testName = suite;
+    if (suite in browsertimeEssentialTests) {
+      testName = `essential ${suite}`;
+      if ('bytecode-cached' in alert.series_signature.tags) {
+        testName = `bytecode ${suite}`;
+      }
+    }
+    const jobUrl = getSideBySideLink(
+      alertSummary.repository,
+      alertSummary.prev_push_revision,
+      alertSummary.revision,
+      platform,
+      testName,
+    );
+
+    return jobUrl;
+  };
+
+  showCriticalMagnitudeIcons(alert) {
+    const alertMagnitude = Math.round(alert.amount_pct);
+    const alertNewValue = alert.new_value;
+    let numberOfIcons = 0;
+    let exceedsMaximumIcons = false;
+
+    if (alert.is_regression) {
+      if (
+        alertMagnitude >= 100 &&
+        alertNewValue !== 0 &&
+        alertMagnitude < 200
+      ) {
+        numberOfIcons = 1;
+      } else if (alertMagnitude >= 200 && alertMagnitude < 300) {
+        numberOfIcons = 2;
+      } else if (alertMagnitude === 300) {
+        numberOfIcons = 3;
+      } else if (alertMagnitude > 300) {
+        numberOfIcons = 3;
+        exceedsMaximumIcons = true;
+      }
+    } else if (alertMagnitude === 100 && alertNewValue === 0) {
+      this.setState((prevState) => ({
+        icons: [
+          ...prevState.icons,
+          <SimpleTooltip
+            key={alert.id}
+            text={
+              <FontAwesomeIcon
+                icon={faFire}
+                className="icon-green-flame icon"
+              />
+            }
+            tooltipText="This should be treated as a regression"
+          />,
+        ],
+      }));
+    }
+
+    for (let i = 0; i < numberOfIcons; i++) {
+      this.setState((prevState) => ({
+        icons: [
+          ...prevState.icons,
+          <SimpleTooltip
+            key={i}
+            text={<FontAwesomeIcon icon={faFire} className="icon" />}
+            tooltipText="Magnitude"
+          />,
+        ],
+      }));
+
+      if (exceedsMaximumIcons && i === numberOfIcons - 1) {
+        this.setState((prevState) => ({
+          icons: [
+            ...prevState.icons,
+            <FontAwesomeIcon
+              key={i + 1}
+              icon={faPlus}
+              className="icon-plus icon"
+            />,
+          ],
+        }));
+      }
+    }
+  }
+
   render() {
-    const { user, alert, alertSummary } = this.props;
-    const { starred, checkboxSelected } = this.state;
+    const { user = null, alert, alertSummary } = this.props;
+    const { starred, checkboxSelected, icons } = this.state;
+    const { repository, framework } = alertSummary;
+
+    const { tags, extra_options: options } = alert.series_signature;
+
+    const tagsAndOptions = tags.concat(options);
+    const stripDuplicates = new Set(tagsAndOptions.filter((item) => item));
+    const items = Array.from(stripDuplicates).map((element) => ({
+      name: element,
+      tag: tags.includes(element),
+      option: options.includes(element),
+      tagAndOption: tags.includes(element) && options.includes(element),
+    }));
+
+    const timeRange = getTimeRange(alertSummary);
 
     const alertStatus = getStatus(alert.status, alertStatusMap);
     const tooltipText = alert.classifier_email
       ? `Classified by ${alert.classifier_email}`
       : 'Classified automatically';
     const bookmarkClass = starred ? 'visible' : '';
+    const noiseProfile = alert.noise_profile || 'N\\A';
+    const noiseProfileTooltip = alert.noise_profile
+      ? noiseProfiles[alert.noise_profile.replace('/', '')]
+      : noiseProfiles.NA;
+    // TODO: make a side-by-side status of its own. We know that side-by-side was triggered
+    //  if only backfill bot has one of the three statuses below
+    const backfillResultStatuses = [
+      alertBackfillResultStatusMap.backfilled,
+      alertBackfillResultStatusMap.successful,
+      alertBackfillResultStatusMap.failed,
+    ];
+    const sxsTriggered =
+      alert.backfill_record &&
+      backfillResultStatuses.includes(alert.backfill_record.status);
+    const showSideBySideLink =
+      alert.series_signature.framework_id === browsertimeId &&
+      !alert.series_signature.tags.includes('interactive') &&
+      !browsertimeBenchmarksTests.includes(alert.series_signature.suite) &&
+      sxsTriggered;
+
+    const backfillStatusInfo = this.getBackfillStatusInfo(alert);
+    let sherlockTooltip = backfillStatusInfo?.message;
+    if (backfillStatusInfo?.displayTasksCount) {
+      sherlockTooltip = (
+        <>
+          <i>{backfillStatusInfo.message}</i>
+          <br />
+          In progress: {backfillStatusInfo.backfillsInProgress}
+          <br />
+          Successful: {backfillStatusInfo.backfillsSuccessful}
+          <br />
+          Failed: {backfillStatusInfo.backfillsFailed}
+          <br />
+        </>
+      );
+    }
 
     return (
       <tr
         className={
           alertSummary.notes ? 'border-top border-left border-right' : 'border'
         }
+        aria-label="Alert table row"
         data-testid={alert.id}
       >
         <td className="table-width-xs px-1">
-          <FormGroup check className="ml-2 pl-4">
-            <Label hidden>alert {alert.id} title</Label>
-            <Input
-              aria-label={`alert ${alert.id} title`}
-              data-testid={`alert ${alert.id} checkbox`}
-              type="checkbox"
-              disabled={!user.isStaff}
-              checked={checkboxSelected}
-              onChange={() =>
-                this.setState(
-                  { checkboxSelected: !checkboxSelected },
-                  this.updateCheckbox,
-                )
-              }
-            />
-          </FormGroup>
+          <Form.Check
+            className="ms-4"
+            aria-label={`alert ${alert.id} title`}
+            data-testid={`alert ${alert.id} checkbox`}
+            type="checkbox"
+            disabled={!user.isStaff}
+            checked={checkboxSelected}
+            onChange={() =>
+              this.setState(
+                { checkboxSelected: !checkboxSelected },
+                this.updateCheckbox,
+              )
+            }
+          />
         </td>
-        <td className="px-0">
+        <td className="px-0 d-flex flex-column align-items-start border-top-0">
           <Button
-            color="black"
+            variant="black"
             aria-label={
               starred
                 ? 'Remove bookmark from this Alert'
@@ -318,6 +463,15 @@ export default class AlertTableRow extends React.Component {
               icon={starred ? faStarSolid : faStarRegular}
             />
           </Button>
+          <a
+            href={getGraphsURL(alert, timeRange, repository, framework)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-dark button btn border p-0 border-0 bg-transparent"
+            aria-label="graph-link"
+          >
+            <FontAwesomeIcon title="Open graph" icon={faChartLine} />
+          </a>
         </td>
         <td className="text-left">
           {alertStatus !== 'untriaged' ? (
@@ -328,31 +482,78 @@ export default class AlertTableRow extends React.Component {
           ) : (
             this.getTitleText(alert, alertStatus)
           )}
-        </td>
-        <td className="table-width-md">{this.getTags(alert)}</td>
-        <td className="table-width-md">{formatNumber(alert.prev_value)}</td>
-        <td className="table-width-sm">
-          <span
-            className={alert.is_regression ? 'text-danger' : 'text-success'}
-          >
-            {alert.prev_value < alert.new_value && <span>&lt;</span>}
-            {alert.prev_value > alert.new_value && <span>&gt;</span>}
-          </span>
-        </td>
-        <td className="table-width-md">{formatNumber(alert.new_value)}</td>
-        <td className="table-width-md">
-          <SimpleTooltip
-            textClass="detail-hint"
-            text={`${alert.amount_pct}%`}
-            tooltipText={`Absolute difference: ${alert.amount_abs}`}
-          />
+          {backfillStatusInfo && (
+            <span className="text-darker-info">
+              <SimpleTooltip
+                key={alert.id}
+                text={
+                  <FontAwesomeIcon
+                    icon={backfillStatusInfo.icon}
+                    color={backfillStatusInfo.color}
+                    data-testid={`alert ${alert.id.toString()} sherlock icon`}
+                  />
+                }
+                tooltipText={sherlockTooltip}
+              />
+            </span>
+          )}
         </td>
         <td className="table-width-lg">
-          <ProgressBar
-            magnitude={this.getCappedMagnitude(alert.amount_pct)}
-            regression={alert.is_regression}
-            color={!alert.is_regression ? 'success' : 'danger'}
-          />
+          <div className="information-container">
+            <AlertTablePlatform
+              platform={alert.series_signature.machine_platform}
+            />
+          </div>
+        </td>
+        {alertSummary.framework === browsertimeId && (
+          <td className="table-width-md">
+            {showSideBySideLink ? (
+              <span className="text-darker-info">
+                <a
+                  href={this.buildSideBySideLink()}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-dark button btn border p-0 border-0 bg-transparent"
+                  aria-label="side-by-side"
+                >
+                  <FontAwesomeIcon
+                    title="Open side-by-side link"
+                    icon={faCirclePlay}
+                    data-testid={`alert ${alert.id.toString()} side-by-side icon`}
+                  />
+                </a>
+              </span>
+            ) : (
+              <Badge className="mb-1" bg="light" text="dark">
+                None
+              </Badge>
+            )}
+          </td>
+        )}
+        <td className="table-width-lg">
+          <div className="information-container">
+            <div className="option">
+              <BadgeTooltip
+                textClass="detail-hint"
+                text={noiseProfile}
+                tooltipText={noiseProfileTooltip}
+                autohide={false}
+              />
+            </div>
+            {icons.length > 0 ? (
+              <div className="option" data-testid="flame-icons">
+                {icons}
+              </div>
+            ) : (
+              ''
+            )}
+          </div>
+        </td>
+        <td className="table-width-lg tags-and-options-td">
+          <AlertTableTagsOptions alertId={alert.id} items={items} />
+        </td>
+        <td className="table-width-md">
+          <Magnitude alert={alert} />
         </td>
         <td className="table-width-sm">
           <SimpleTooltip
@@ -393,9 +594,4 @@ AlertTableRow.propTypes = {
   selectedAlerts: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   updateViewState: PropTypes.func.isRequired,
   modifyAlert: PropTypes.func,
-};
-
-AlertTableRow.defaultProps = {
-  user: null,
-  modifyAlert,
 };

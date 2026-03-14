@@ -66,14 +66,14 @@ def calc_t(w1, w2, weight_fn=None):
 
     s1 = analyze(w1, weight_fn)
     s2 = analyze(w2, weight_fn)
-    delta_s = s2['avg'] - s1['avg']
+    delta_s = s2["avg"] - s1["avg"]
 
     if delta_s == 0:
         return 0
-    if s1['variance'] == 0 and s2['variance'] == 0:
-        return float('inf')
+    if s1["variance"] == 0 and s2["variance"] == 0:
+        return float("inf")
 
-    return delta_s / (((s1['variance'] / s1['n']) + (s2['variance'] / s2['n'])) ** 0.5)
+    return delta_s / (((s1["variance"] / s1["n"]) + (s2["variance"] / s2["n"])) ** 0.5)
 
 
 @functools.total_ordering
@@ -82,8 +82,7 @@ class RevisionDatum:
     This class represents a specific revision and the set of values for it
     """
 
-    def __init__(self, push_timestamp, push_id, values):
-
+    def __init__(self, push_timestamp, push_id, values, replicates=None):
         # Date code was pushed
         self.push_timestamp = push_timestamp
 
@@ -93,6 +92,9 @@ class RevisionDatum:
 
         # data values associated with this revision
         self.values = copy.copy(values)
+
+        # replicates associated with this revision
+        self.replicates = list(replicates or [])
 
         # t-test score
         self.t = 0
@@ -107,14 +109,9 @@ class RevisionDatum:
         return self.push_timestamp < o.push_timestamp
 
     def __repr__(self):
-        values_str = '[ %s ]' % ', '.join(['%.3f' % value for value in self.values])
-        return "<%s: %s, %s, %.3f, %s>" % (
-            self.push_timestamp,
-            self.push_id,
-            values_str,
-            self.t,
-            self.change_detected,
-        )
+        values_csv = ", ".join([f"{value:.3f}" for value in self.values])
+        values_str = f"[ {values_csv} ]"
+        return f"<{self.push_timestamp}: {self.push_id}, {values_str}, {self.t:.3f}, {self.change_detected}>"
 
 
 def detect_changes(data, min_back_window=12, max_back_window=24, fore_window=12, t_threshold=7):

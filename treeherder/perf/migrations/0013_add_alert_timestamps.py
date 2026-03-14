@@ -4,14 +4,15 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('perf', '0012_rename_summary_last_updated'),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='performancealert', name='created', field=models.DateTimeField(null=True),
+            model_name='performancealert',
+            name='created',
+            field=models.DateTimeField(null=True),
         ),
         migrations.AlterField(
             model_name='performancealert',

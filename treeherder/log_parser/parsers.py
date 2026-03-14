@@ -46,50 +46,52 @@ class ErrorParser(ParserBase):
         "TEST-UNEXPECTED-",
         "fatal error",
         "FATAL ERROR",
+        "Hit MOZ_CRASH",
         "REFTEST ERROR",
         "PROCESS-CRASH",
         "Assertion fail",
         "###!!! ABORT:",
         "SUMMARY: AddressSanitizer",
         "SUMMARY: ThreadSanitizer",
+        "SUMMARY: UndefinedBehaviorSanitizer",
         "ThreadSanitizer: nested bug",
         "Automation Error:",
         "command timed out:",
         "wget: unable ",
         "bash.exe: *** ",
         "Unsuccessful task run with exit code: 137",
+        "YOU ARE LEAKING THE WORLD",
     )
 
     RE_ERR_MATCH = re.compile(
-        (
-            r"^g?make(?:\[\d+\])?: \*\*\*"
-            r"|^[A-Za-z.]+Error: "
-            r"|^[A-Za-z.]*Exception: "
-            r"|^\[  FAILED  \] "
-            r"|^remoteFailed:"
-            r"|^rm: cannot "
-            r"|^abort:"
-            r"|^\[taskcluster\] Error:"
-            r"|^\[[\w._-]+:(?:error|exception)\]"
-        )
+        r"^g?make(?:\[\d+\])?: \*\*\*"
+        r"|^[A-Za-z.]+Error: "
+        r"|^[A-Za-z.]*Exception: "
+        r"|^\[  FAILED  \] "
+        r"|^remoteFailed:"
+        r"|^rm: cannot "
+        r"|^abort:"
+        r"|^\[taskcluster\] Error:"
+        r"|^\[[\w._-]+:(?:error|exception)\]"
     )
 
     RE_ERR_SEARCH = re.compile(
-        (
-            r" error\(\d*\):"
-            r"|:\d+: error:"
-            r"| error R?C\d*:"
-            r"|ERROR [45]\d\d:"
-            r"|mozmake\.(?:exe|EXE)(?:\[\d+\])?: \*\*\*"
-        )
+        r" error\(\d*\):"
+        r"|:\d+: error:"
+        r"| error R?C\d*:"
+        r"|ERROR [45]\d\d:"
+        r"|mozmake\.(?:exe|EXE)(?:\[\d+\])?: \*\*\*"
     )
 
     RE_EXCLUDE_1_SEARCH = re.compile(r"TEST-(?:INFO|PASS) ")
 
     RE_EXCLUDE_2_SEARCH = re.compile(
         r"I[ /](Gecko|TestRunner).*TEST-UNEXPECTED-"
+        r"|Assertion failure$"
+        r"|^TEST-UNEXPECTED-WARNING\b"
         r"|^TimeoutException: "
         r"|^ImportError: No module named pygtk$"
+        r"|non-fatal error"
     )
 
     RE_ERR_1_MATCH = re.compile(r"^\d+:\d+:\d+ +(?:ERROR|CRITICAL|FATAL) - ")
@@ -147,7 +149,7 @@ class ErrorParser(ParserBase):
         # log prefix if we know we're in a TaskCluster log.
 
         # First line of TaskCluster logs almost certainly has this.
-        if line.startswith('[taskcluster '):
+        if line.startswith("[taskcluster "):
             self.is_taskcluster = True
 
         # For performance reasons, only do this if we have identified as
@@ -155,7 +157,9 @@ class ErrorParser(ParserBase):
         if self.is_taskcluster:
             line = re.sub(self.RE_TASKCLUSTER_NORMAL_PREFIX, "", line)
 
-        if self.is_error_line(line):
+        if self.is_error_line(line) and (
+            len(self.artifact) == 0 or self.artifact[-1]["line"] != line.rstrip()
+        ):
             self.add(line, lineno)
 
     def is_error_line(self, line):
@@ -183,7 +187,7 @@ class PerformanceParser(ParserBase):
     # Using $ in the regex as an end of line bounds causes the
     # regex to fail on windows logs. This is likely due to the
     # ^M character representation of the windows end of line.
-    RE_PERFORMANCE = re.compile(r'.*?PERFHERDER_DATA:\s+({.*})')
+    RE_PERFORMANCE = re.compile(r".*?PERFHERDER_DATA:\s+({.*})")
 
     def __init__(self):
         super().__init__("performance_data")
@@ -194,18 +198,16 @@ class PerformanceParser(ParserBase):
             try:
                 data = json.loads(match.group(1))
                 if not bool(data):
-                    raise EmptyPerformanceData("The perf data is empty.")
+                    raise EmptyPerformanceDataError("The perf data is empty.")
                 validate_perf_data(data)
                 self.artifact.append(data)
             except ValueError:
-                logger.warning("Unable to parse Perfherder data from line: %s", line)
+                logger.warning(f"Unable to parse Perfherder data from line: {line}")
             except jsonschema.ValidationError as e:
-                logger.warning(
-                    "Perfherder line '%s' does not comply with " "json schema: %s", line, e
-                )
+                logger.warning(f"Perfherder line '{line}' does not comply with json schema: {e}")
 
             # Don't mark the parser as complete, in case there are multiple performance artifacts.
 
 
-class EmptyPerformanceData(Exception):
+class EmptyPerformanceDataError(Exception):
     pass

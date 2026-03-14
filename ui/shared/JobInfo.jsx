@@ -1,5 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
+import { Link } from 'react-router-dom';
 
 import { getInspectTaskUrl } from '../helpers/url';
 import { getJobSearchStrHref } from '../helpers/job';
@@ -38,8 +39,42 @@ const getTimeFields = function getTimeFields(job) {
 };
 
 export default class JobInfo extends React.PureComponent {
+  renderFieldValue(field) {
+    if (field.url) {
+      return (
+        <a
+          title={field.value}
+          href={field.url}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {field.value}
+        </a>
+      );
+    }
+
+    if (field.subfields) {
+      return (
+        <ul className="list-unstyled ml-1">
+          {field.subfields.map((sf) => (
+            <li key={sf.name}>
+              {sf.name}: <span>{sf.value}</span>
+            </li>
+          ))}
+        </ul>
+      );
+    }
+
+    return <span>{field.value}</span>;
+  }
+
   render() {
-    const { job, extraFields, showJobFilters, currentRepo } = this.props;
+    const {
+      job,
+      extraFields = [],
+      showJobFilters = true,
+      currentRepo = null,
+    } = this.props;
     const {
       searchStr,
       task_id: taskId,
@@ -52,24 +87,24 @@ export default class JobInfo extends React.PureComponent {
     const timeFields = getTimeFields(job);
 
     return (
-      <ul id="job-info" className="list-unstyled ml-1">
-        <li className="small">
+      <ul id="job-info" className="list-unstyled ms-1 fs-80">
+        <>
           <strong>Job: </strong>
           {showJobFilters ? (
             <React.Fragment>
-              <a
+              <Link
                 title="Filter jobs containing these keywords"
-                href={getJobSearchStrHref(searchStr)}
+                to={{ search: getJobSearchStrHref(searchStr) }}
               >
                 {searchStr}
-              </a>
+              </Link>
             </React.Fragment>
           ) : (
             <span>{searchStr}</span>
           )}
-        </li>
+        </>
         {taskId && currentRepo && (
-          <li className="small">
+          <li>
             <strong>Task: </strong>
             <a
               id="taskInfo"
@@ -86,32 +121,29 @@ export default class JobInfo extends React.PureComponent {
             <Clipboard description="task ID" text={taskId} />
           </li>
         )}
-        <li className="small">
+        {taskId && job.taskQueueId && (
+          <li>
+            <strong>Task Queue: </strong>
+            <span>{job.taskQueueId}</span>
+          </li>
+        )}
+        <li>
           <strong>Build: </strong>
-          <span>{`${buildArchitecture} ${buildPlatform} ${
-            buildOs || ''
-          }`}</span>
+          <span>
+            {[buildArchitecture, buildPlatform, buildOs]
+              .filter((val) => val && val !== '-')
+              .join(' ')}
+          </span>
         </li>
-        <li className="small">
+        <li>
           <strong>Job name: </strong>
           <span>{jobTypeName}</span>
           <Clipboard description="job Name" text={jobTypeName} />
         </li>
         {[...timeFields, ...extraFields].map((field) => (
-          <li className="small" key={`${field.title}${field.value}`}>
+          <li key={`${field.title}${field.value ?? ''}`}>
             <strong>{field.title}: </strong>
-            {field.url ? (
-              <a
-                title={field.value}
-                href={field.url}
-                target="_blank"
-                rel="noopener noreferrer"
-              >
-                {field.value}
-              </a>
-            ) : (
-              <span>{field.value}</span>
-            )}
+            {this.renderFieldValue(field)}
             {field.clipboard && (
               <Clipboard
                 description={field.clipboard.description}
@@ -144,14 +176,14 @@ JobInfo.propTypes = {
         description: PropTypes.string.isRequired,
         text: PropTypes.string,
       }),
+      subfields: PropTypes.arrayOf(
+        PropTypes.exact({
+          name: PropTypes.string.isRequired,
+          value: PropTypes.string.isRequired,
+        }),
+      ),
     }),
   ),
   showJobFilters: PropTypes.bool,
   currentRepo: PropTypes.shape({}),
-};
-
-JobInfo.defaultProps = {
-  extraFields: [],
-  showJobFilters: true,
-  currentRepo: null,
 };

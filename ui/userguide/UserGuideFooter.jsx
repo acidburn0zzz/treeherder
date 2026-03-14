@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 const UserGuideFooter = function UserGuideFooter() {
   return (
@@ -27,8 +27,11 @@ const UserGuideFooter = function UserGuideFooter() {
       </div>
 
       <div>
-        <a className="midgray" href="https://whatsdeployed.io/s-dqv">
-          Whats Deployed?
+        <a
+          className="midgray"
+          href="https://whatsdeployed.io/s/BIY/Mozilla/Treeherder"
+        >
+          What&apos;s Deployed?
         </a>
       </div>
     </div>

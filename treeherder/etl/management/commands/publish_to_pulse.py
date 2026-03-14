@@ -20,12 +20,12 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            'routing_key', help="The routing key for publishing. Ex: 'mozilla-inbound.staging'"
+            "routing_key", help="The routing key for publishing. Ex: 'autoland.staging'"
         )
         parser.add_argument(
-            'connection_url', help="The Pulse url. Ex: 'amqp://guest:guest@localhost:5672/'"
+            "connection_url", help="The Pulse url. Ex: 'amqp://guest:guest@localhost:5672/'"
         )
-        parser.add_argument('payload_file', help="Path to the file that holds the job payload JSON")
+        parser.add_argument("payload_file", help="Path to the file that holds the job payload JSON")
 
     def handle(self, *args, **options):
         routing_key = options["routing_key"]
@@ -33,13 +33,13 @@ class Command(BaseCommand):
         userid = urlparse(connection_url).username
         payload_file = options["payload_file"]
 
-        exchange_name = "exchange/{}/jobs".format(userid)
+        exchange_name = f"exchange/{userid}/jobs"
 
         connection = Connection(connection_url)
         exchange = Exchange(exchange_name, type="topic")
         producer = Producer(connection, exchange, routing_key=routing_key, auto_declare=True)
 
-        self.stdout.write("Published to exchange: {}".format(exchange_name))
+        self.stdout.write(f"Published to exchange: {exchange_name}")
 
         with open(payload_file) as f:
             body = f.read()

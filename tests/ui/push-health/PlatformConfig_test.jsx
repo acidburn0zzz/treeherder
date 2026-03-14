@@ -1,6 +1,12 @@
-import React from 'react';
+
 import fetchMock from 'fetch-mock';
-import { render, cleanup, waitFor, fireEvent } from '@testing-library/react';
+import {
+  render,
+  cleanup,
+  waitFor,
+  fireEvent,
+  act,
+} from '@testing-library/react';
 
 import {
   getProjectUrl,
@@ -11,20 +17,24 @@ import PlatformConfig from '../../../ui/push-health/PlatformConfig';
 import pushHealth from '../mock/push_health';
 import fullJob from '../mock/full_job.json';
 import bugSuggestions from '../mock/bug_suggestions.json';
+import TaskSelection from '../../../ui/push-health/TaskSelection';
 
 const repoName = 'autoland';
 const { jobs } = pushHealth;
 const testFailure = pushHealth.metrics.tests.details.needInvestigation[2];
 
 beforeEach(() => {
-  fetchMock.get('https://treestatus.mozilla-releng.net/trees/autoland', {
-    result: {
-      message_of_the_day: '',
-      reason: '',
-      status: 'open',
-      tree: 'autoland',
+  fetchMock.get(
+    'https://treestatus.prod.lando.prod.cloudops.mozgcp.net/trees/autoland',
+    {
+      result: {
+        message_of_the_day: '',
+        reason: '',
+        status: 'open',
+        tree: 'autoland',
+      },
     },
-  });
+  );
   setUrlParam('repo', repoName);
   fetchMock.get(getProjectUrl('/jobs/285857770/', repoName), fullJob);
   fetchMock.get(getProjectUrl('/jobs/285852303/', repoName), fullJob);
@@ -50,18 +60,28 @@ afterEach(() => {
 });
 
 describe('PlatformConfig', () => {
+  const currentRepo = { name: repoName, tc_root_url: 'http://foo.com' };
   const testPlatformConfig = (failure, jobs) => (
     <PlatformConfig
-      failure={failure}
-      jobs={jobs}
-      repo="autoland"
+      key={failure.key}
+      testName={failure.testName}
+      jobName={failure.jobName}
+      jobs={jobs[failure.jobName]}
       user={{ email: 'foo' }}
       revision="abc"
-      currentRepo={{ name: repoName, tc_root_url: 'http://foo.com' }}
-      groupedBy="platform"
+      currentRepo={currentRepo}
       notify={() => {}}
       updateParamsAndState={() => {}}
-    />
+    >
+      <TaskSelection
+        failure={failure}
+        groupedBy="platform"
+        addSelectedTest={() => {}}
+        removeSelectedTest={() => {}}
+        allPlatformsSelected={false}
+        currentRepo={currentRepo}
+      />
+    </PlatformConfig>
   );
 
   test('should show the test name', async () => {
@@ -86,7 +106,9 @@ describe('PlatformConfig', () => {
     const { getByText } = render(testPlatformConfig(testFailure, jobs));
     const detailsButton = getByText('task');
 
-    fireEvent.click(detailsButton);
+    await act(async () => {
+      fireEvent.click(detailsButton);
+    });
 
     expect(
       await waitFor(() =>
@@ -99,11 +121,17 @@ describe('PlatformConfig', () => {
     const { getByText } = render(testPlatformConfig(testFailure, jobs));
     const detailsButton = getByText('task');
 
-    fireEvent.click(detailsButton);
+    await act(async () => {
+      fireEvent.click(detailsButton);
+    });
 
-    const artifactsTab = await waitFor(() => getByText('Artifacts'));
+    const artifactsTab = await waitFor(() =>
+      getByText('Artifacts and Debugging Tools'),
+    );
 
-    fireEvent.click(artifactsTab);
+    await act(async () => {
+      fireEvent.click(artifactsTab);
+    });
 
     expect(await waitFor(() => getByText('thing.log'))).toBeVisible();
   });

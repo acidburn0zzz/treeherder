@@ -18,11 +18,9 @@ export const getData = async function getData(url, options = {}) {
     failureStatus = response.status;
   }
 
-  const contentType = response.headers
-    .get('content-type')
-    .startsWith('text/html');
+  const contentType = response.headers.get('content-type');
 
-  if (contentType && failureStatus) {
+  if (contentType && contentType !== 'application/json' && failureStatus) {
     const errorMessage = processErrorMessage(
       `${failureStatus}: ${response.statusText}`,
       failureStatus,
@@ -38,13 +36,11 @@ export const getData = async function getData(url, options = {}) {
   return { data, failureStatus };
 };
 
-// TODO: The credentials param can be removed in July once Firefox 62 ships and it is the default.
 export const create = function postJson(uri, data) {
   return getData(uri, {
     method: 'POST',
     headers: generateHeaders(),
     body: JSON.stringify(data),
-    credentials: 'same-origin',
   });
 };
 
@@ -53,15 +49,21 @@ export const update = function putJson(uri, data) {
     method: 'PUT',
     headers: generateHeaders(),
     body: JSON.stringify(data),
-    credentials: 'same-origin',
   });
 };
 
 export const destroy = function deleteRecord(uri) {
-  return fetch(uri, {
+  return getData(uri, {
     method: 'DELETE',
     headers: generateHeaders(),
-    credentials: 'same-origin',
+  });
+};
+
+export const destroyMany = function deleteRecords(uri, data) {
+  return getData(uri, {
+    method: 'DELETE',
+    headers: generateHeaders(),
+    body: JSON.stringify(data),
   });
 };
 

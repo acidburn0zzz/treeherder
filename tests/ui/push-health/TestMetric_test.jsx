@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { render, waitFor } from '@testing-library/react';
 
 import TestMetric from '../../../ui/push-health/TestMetric';
@@ -21,7 +21,6 @@ describe('TestMetric', () => {
       notify={() => {}}
       searchStr=""
       updateParamsAndState={() => {}}
-      showParentMatches={false}
     />
   );
 
@@ -30,14 +29,6 @@ describe('TestMetric', () => {
 
     expect(
       await waitFor(() => getByText('Possible Regressions', { exact: false })),
-    ).toBeInTheDocument();
-  });
-
-  test('should have a Known Issues section', async () => {
-    const { getByText } = render(testTestMetric(tests, jobs));
-
-    expect(
-      await waitFor(() => getByText('Known Issues', { exact: false })),
     ).toBeInTheDocument();
   });
 

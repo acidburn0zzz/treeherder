@@ -10,10 +10,10 @@ export default class BugJobMapModel {
   }
 
   // the options parameter is used to filter/limit the list of objects
-  static getList(options) {
-    return fetch(
-      `${getProjectUrl(uri)}${createQueryParams(options)}`,
-    ).then((resp) =>
+  static getList(options, signal) {
+    return fetch(`${getProjectUrl(uri)}${createQueryParams(options)}`, {
+      signal,
+    }).then((resp) =>
       resp.json().then((data) => data.map((elem) => new BugJobMapModel(elem))),
     );
   }
@@ -23,6 +23,12 @@ export default class BugJobMapModel {
   }
 
   destroy() {
+    if (!this.bug_id) {
+      // Use the internal bug reference
+      return destroy(
+        `${getProjectUrl(uri)}${this.job_id}-i${this.bug_internal_id}/`,
+      );
+    }
     return destroy(`${getProjectUrl(uri)}${this.job_id}-${this.bug_id}/`);
   }
 }

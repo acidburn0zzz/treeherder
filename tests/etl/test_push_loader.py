@@ -8,6 +8,7 @@ import responses
 from treeherder.etl.push_loader import (
     GithubPullRequestTransformer,
     GithubPushTransformer,
+    HgPushFetchError,
     HgPushTransformer,
     PulsePushError,
     PushLoader,
@@ -56,7 +57,7 @@ def mock_github_pr_commits(activate_responses):
         "https://api.github.com/repos/mozilla/test_treeherder/pulls/1692/commits",
         body=mocked_content,
         status=200,
-        content_type='application/json',
+        content_type="application/json",
     )
 
 
@@ -74,8 +75,7 @@ def mock_github_push_compare(activate_responses):
         "5fdb785b28b356f50fc1d9cb180d401bb03fc1f1",
         json=mocked_content[0],
         status=200,
-        match_querystring=False,
-        content_type='application/json',
+        content_type="application/json",
     )
     responses.add(
         responses.GET,
@@ -84,8 +84,7 @@ def mock_github_push_compare(activate_responses):
         "ad9bfc2a62b70b9f3dbb1c3a5969f30bacce3d74",
         json=mocked_content[1],
         status=200,
-        match_querystring=False,
-        content_type='application/json',
+        content_type="application/json",
     )
 
 
@@ -100,8 +99,7 @@ def mock_hg_push_commits(activate_responses):
         "https://hg.mozilla.org/try/json-pushes",
         body=mocked_content,
         status=200,
-        match_querystring=False,
-        content_type='application/json',
+        content_type="application/json",
     )
 
 
@@ -221,3 +219,18 @@ def test_ingest_github_push_comma_separated_branches(
         "https://firefox-ci-tc.services.mozilla.com",
     )
     assert Push.objects.count() == expected_pushes
+
+
+def test_fetch_push_raises_on_empty_pushes(monkeypatch):
+    """Test that a HgPushFetchError is raised when fetch_json returns a dict without 'pushes'"""
+    monkeypatch.setattr("treeherder.etl.push_loader.fetch_json", lambda url: {})
+    transformer = HgPushTransformer(
+        {
+            "payload": {
+                "repo_url": "https://hg.mozilla.org/try",
+                "pushlog_pushes": [{"push_full_json_url": "http://example"}],
+            }
+        }
+    )
+    with pytest.raises(HgPushFetchError):
+        transformer.fetch_push("http://example", repository="try")

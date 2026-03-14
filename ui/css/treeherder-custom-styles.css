@@ -10,10 +10,15 @@
  * when adding new styles.
  */
 
+/*
+ * Font sizing is now handled by Bootstrap 5 custom variables in bootstrap-custom.scss
+ * Link text-decoration is handled by Bootstrap 5 variables
+ */
+
 /* Bootstrap 4 will not show <a> as a link style if it has no href.
    This adds that style back. */
 .link-style {
-  color: #337ab7 !important;
+  color: #337ab7;
   cursor: pointer;
 }
 
@@ -35,6 +40,18 @@
   font-size: 11px;
 }
 
+.font-size-12 {
+  font-size: 12px;
+}
+
+.font-size-14 {
+  font-size: 14px;
+}
+
+.font-size-16 {
+  font-size: 16px;
+}
+
 .font-size-18 {
   font-size: 18px;
 }
@@ -45,6 +62,14 @@
 
 .font-size-24 {
   font-size: 24px;
+}
+
+.fs-80 {
+  font-size: 80%;
+}
+
+.font-weight-400 {
+  font-weight: 400;
 }
 
 .font-weight-500 {
@@ -69,6 +94,11 @@
   visibility: visible;
 }
 
+.button-border {
+  border: 1px solid;
+  border-radius: 5px;
+}
+
 /* Similar Jobs panel */
 .checkbox {
   min-height: 20px;
@@ -81,18 +111,24 @@
   cursor: pointer;
 }
 
-.dropdown-menu > li.disabled > a {
+.dropdown-menu > li:disabled > a {
   pointer-events: none;
   font-style: italic;
   color: grey;
 }
 
-.dropdown-menu > li.disabled {
+.dropdown-menu > li:disabled {
   cursor: not-allowed;
 }
 
 .dropdown-item {
   cursor: pointer;
+  color: #212529 !important;
+}
+
+.dropdown-item:hover,
+.dropdown-item:focus {
+  color: #1e2125;
 }
 
 .form-control:focus {
@@ -118,6 +154,7 @@
   height: 16px;
   vertical-align: text-top;
   opacity: 0.7;
+  user-select: none;
 }
 
 .logviewer-icon:hover {
@@ -127,19 +164,19 @@
 .icon-blue:hover,
 .icon-blue:focus,
 .icon-blue:active {
-  color: #68aae2 !important;
+  color: #68aae2;
 }
 
 .icon-green:hover,
 .icon-green:focus,
 .icon-green:active {
-  color: #0de00d !important;
+  color: #0de00d;
 }
 
 .icon-cyan:hover,
 .icon-cyan:focus,
 .icon-cyan:active {
-  color: #00ffff !important;
+  color: #00ffff;
 }
 
 .icon-superscript {
@@ -149,7 +186,7 @@
 }
 
 .hover-warning:hover {
-  color: #fa4444 !important;
+  color: #fa4444;
 }
 
 .dim-quarter {
@@ -293,6 +330,12 @@
   color: #0d7d8f;
 }
 
+.alert-info {
+  color: #0c5460;
+  background-color: #d1ecf1;
+  border-color: #bee5eb;
+}
+
 .alert-darker-info,
 .badge-darker-info {
   background: #0d7d8f;
@@ -304,8 +347,8 @@
 }
 
 .btn-darker-info {
-  background-color: #0d7d8f;
-  border-color: #0d7d8f;
+  background-color: #17a2b8;
+  border-color: #17a2b8;
   color: #ffffff;
 }
 
@@ -314,9 +357,10 @@
   background-color: #0a5e6d;
 }
 
-.btn-darker-info.disabled {
-  color: black;
-  background-color: #30b9ce80;
+.btn-darker-info:disabled {
+  color: #ffffff;
+  background-color: #5bc0de;
+  border-color: #5bc0de;
 }
 
 .btn-outline-darker-info {
@@ -325,13 +369,13 @@
 }
 
 .btn-outline-darker-info:hover,
-.btn-outline-darker-info:not(:disabled):not(.disabled).active {
+.btn-outline-darker-info:not(:disabled).active {
   background-color: #0d7d8f;
   border-color: #0d7d8f;
   color: #ffffff;
 }
 
-.btn-outline-darker-info.disabled {
+.btn-outline-darker-info:disabled {
   color: #02363f;
   background-color: white;
   border-color: #0d7d8f;
@@ -352,23 +396,22 @@
   background-color: #6c757d;
 }
 
-.btn-darker-secondary {
+.btn-darker-secondary,
+a.btn-darker-secondary,
+a.btn-darker-secondary:visited {
   color: #ffffff;
   background-color: #6c757d;
   border-color: #6c757d;
 }
 
-.btn-darker-secondary:hover {
+.btn-darker-secondary:hover,
+a.btn-darker-secondary:hover {
   color: #ffffff;
   background-color: #5a6268;
   border-color: #545b62;
 }
 
-.btn-darker-secondary:visited {
-  color: #ffffff;
-}
-
-.btn-darker-secondary.disabled {
+.btn-darker-secondary:disabled {
   color: #242424;
   background-color: white;
   border-color: #6c757d;
@@ -378,6 +421,32 @@
   color: #6c757d;
   background-color: #fff;
   border-color: #6c757d;
+}
+
+.btn-outline-darker-secondary:disabled {
+  color: #6c757d;
+  background-color: #fff;
+  border-color: #6c757d;
+}
+
+.link-darker-secondary {
+  color: #6c757d;
+}
+
+.link-darker-secondary:visited {
+  color: #6c757d;
+}
+
+.link-darker-secondary:hover {
+  color: #5a6268;
+}
+
+/* Outline Dark Button */
+.btn-outline-dark:hover,
+a.btn-outline-dark:hover {
+  background-color: #e9ecef;
+  border-color: #6c757d;
+  color: #212529;
 }
 
 /*
@@ -415,7 +484,7 @@
 }
 
 .row-height-tight {
-  line-height: 15px !important;
+  line-height: 15px;
 }
 
 /* ReactTable overriding row, button and link color style for contrast pass */
@@ -429,7 +498,7 @@
 }
 
 .ReactTable .item-badge {
-  color: #057699;
+  color: black;
 }
 
 .rt-tbody a {

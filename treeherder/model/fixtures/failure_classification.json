@@ -38,7 +38,7 @@
     "pk": 6,
     "model": "model.failureclassification",
     "fields": {
-      "name": "intermittent needs filing"
+      "name": "new failure not classified"
     }
   },
   {
@@ -46,6 +46,13 @@
     "model": "model.failureclassification",
     "fields": {
       "name": "autoclassified intermittent"
+    }
+  },
+  {
+    "pk": 8,
+    "model": "model.failureclassification",
+    "fields": {
+      "name": "intermittent needs bugid"
     }
   }
 ]

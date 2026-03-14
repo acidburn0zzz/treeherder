@@ -4,10 +4,10 @@ from django.core.management.base import BaseCommand
 
 from treeherder.model.models import OptionCollection
 from treeherder.push_health.tests import (
+    CACHE_KEY_ROOT,
     fixed_by_commit_history_days,
     get_history,
     intermittent_history_days,
-    CACHE_KEY_ROOT,
 )
 from treeherder.webapp.api.utils import REPO_GROUPS
 
@@ -18,41 +18,41 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            '--debug',
-            action='store_true',
-            dest='debug',
+            "--debug",
+            action="store_true",
+            dest="debug",
             default=False,
-            help='Write debug messages to stdout',
+            help="Write debug messages to stdout",
         )
         parser.add_argument(
-            '--days',
-            action='store',
-            dest='days',
+            "--days",
+            action="store",
+            dest="days",
             default=5,
             type=int,
-            help='Number of history sets to store (one for each day prior to today)',
+            help="Number of history sets to store (one for each day prior to today)",
         )
 
     def handle(self, *args, **options):
-        self.is_debug = options['debug']
-        days = options['days']
+        self.is_debug = options["debug"]
+        days = options["days"]
 
-        self.debug("Fetching {} sets of history...".format(days))
+        self.debug(f"Fetching {days} sets of history...")
 
         option_map = OptionCollection.objects.get_option_collection_map()
-        repository_ids = REPO_GROUPS['trunk']
+        repository_ids = REPO_GROUPS["trunk"]
         for day in range(days):
             push_date = datetime.datetime.now().date() - datetime.timedelta(days=day)
 
             get_history(4, push_date, intermittent_history_days, option_map, repository_ids, True)
 
-            self.debug(f'Cached failure history for {CACHE_KEY_ROOT}:{4}:{push_date}')
+            self.debug(f"Cached failure history for {CACHE_KEY_ROOT}:{4}:{push_date}")
 
             get_history(
                 2, push_date, fixed_by_commit_history_days, option_map, repository_ids, True
             )
 
-            self.debug(f'Cached failure history for {CACHE_KEY_ROOT}:{2}:{push_date}')
+            self.debug(f"Cached failure history for {CACHE_KEY_ROOT}:{2}:{push_date}")
 
     def debug(self, msg):
         if self.is_debug:

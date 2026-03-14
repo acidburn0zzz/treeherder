@@ -4,7 +4,6 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('perf', '0026_add_backfill_record_status'),
     ]
@@ -17,6 +16,8 @@ class Migration(migrations.Migration):
                 ('name', models.CharField(max_length=255)),
                 ('settings', models.TextField()),
             ],
-            options={'db_table': 'performance_settings',},
+            options={
+                'db_table': 'performance_settings',
+            },
         ),
     ]

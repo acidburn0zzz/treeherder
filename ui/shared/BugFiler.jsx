@@ -1,17 +1,6 @@
-import React from 'react';
-import PropTypes from 'prop-types';
-import { connect } from 'react-redux';
-import {
-  Button,
-  Modal,
-  ModalHeader,
-  ModalBody,
-  ModalFooter,
-  Tooltip,
-  FormGroup,
-  Input,
-  Label,
-} from 'reactstrap';
+import { useState, useEffect, useCallback } from 'react';
+import { useSelector } from 'react-redux';
+import { Button, Modal, OverlayTrigger, Tooltip, Form } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faChevronCircleDown,
@@ -23,229 +12,308 @@ import {
 import {
   bugzillaBugsApi,
   bzBaseUrl,
-  dxrBaseUrl,
+  bzComponentEndpoint,
   getApiUrl,
-  hgBaseUrl,
 } from '../helpers/url';
+import { confirmFailure } from '../helpers/job';
 import { create } from '../helpers/http';
-import { notify } from '../job-view/redux/stores/notifications';
+import { omittedLeads, parseSummary, getCrashSignatures } from '../helpers/bug';
+import { notify } from '../job-view/stores/notificationStore';
 
-const crashRegex = /application crashed \[@ (.+)\]$/g;
-const omittedLeads = [
-  'TEST-UNEXPECTED-FAIL',
-  'PROCESS-CRASH',
-  'TEST-UNEXPECTED-ERROR',
-  'REFTEST ERROR',
-];
-/*
- *  Find the first thing in the summary line that looks like a filename.
- */
-const findFilename = (summary) => {
-  // Take left side of any reftest comparisons, as the right side is the reference file
-  // eslint-disable-next-line prefer-destructuring
-  summary = summary.split('==')[0];
-  // Take the leaf node of unix paths
-  summary = summary.split('/').pop();
-  // Take the leaf node of Windows paths
-  summary = summary.split('\\').pop();
-  // Remove leading/trailing whitespace
-  summary = summary.trim();
-  // If there's a space in what's remaining, take the first word
-  // eslint-disable-next-line prefer-destructuring
-  summary = summary.split(' ')[0];
-  return summary;
-};
-/*
- *  Remove extraneous junk from the start of the summary line
- *  and try to find the failing test name from what's left
- */
-const parseSummary = (suggestion) => {
-  let summary = suggestion.search;
-  const searchTerms = suggestion.search_terms;
-  // Strip out some extra stuff at the start of some failure paths
-  let re = /file:\/\/\/.*?\/build\/tests\/reftest\/tests\//gi;
-  summary = summary.replace(re, '');
-  re = /chrome:\/\/mochitests\/content\/a11y\//gi;
-  summary = summary.replace(re, '');
-  re = /http:\/\/([0-9]+\.[0-9]+\.[0-9]+\.[0-9]+):([0-9]+)\/tests\//gi;
-  summary = summary.replace(re, '');
-  re = /xpcshell([-a-zA-Z0-9]+)?.ini:/gi;
-  summary = summary.replace(re, '');
-  summary = summary.replace('/_mozilla/', 'mozilla/tests/');
-  // We don't want to include "REFTEST" when it's an unexpected pass
-  summary = summary.replace(
-    'REFTEST TEST-UNEXPECTED-PASS',
-    'TEST-UNEXPECTED-PASS',
+function computeInitialBugFilerState(props) {
+  const {
+    suggestions,
+    suggestion,
+    fullLog,
+    parsedLog,
+    reftestUrl,
+    selectedJob,
+  } = props;
+
+  const allFailures = suggestions.map((sugg) =>
+    sugg.search
+      .split(' | ')
+      .filter((part) => !omittedLeads.includes(part))
+      .map((item) =>
+        item === 'REFTEST TEST-UNEXPECTED-PASS'
+          ? 'TEST-UNEXPECTED-PASS'
+          : item,
+      ),
   );
-  const summaryParts = summary.split(' | ');
+  const thisFailure = allFailures.map((f) => f.join(' | ')).join('\n');
 
-  // If the search_terms used for finding bug suggestions
-  // contains any of the omittedLeads, that lead is needed
-  // for the full string match, so don't omit it in this case.
-  // If it's not needed, go ahead and omit it.
-  if (searchTerms.length && summaryParts.length > 1) {
-    omittedLeads.forEach((lead) => {
-      if (!searchTerms[0].includes(lead) && summaryParts[0].includes(lead)) {
-        summaryParts.shift();
-      }
-    });
+  const parsedSummary = parseSummary(suggestion);
+  let summaryString = parsedSummary[0].join(' | ');
+  if (selectedJob.job_group_name.toLowerCase().includes('reftest')) {
+    const re = /layout\/reftests\//gi;
+    summaryString = summaryString.replace(re, '');
   }
 
-  // Some of the TEST-FOO bits aren't removed from the summary,
-  // so we sometimes end up with them instead of the test path here.
-  const summaryName =
-    summaryParts[0].startsWith('TEST-') && summaryParts.length > 1
-      ? summaryParts[1]
-      : summaryParts[0];
-  const possibleFilename = findFilename(summaryName);
+  const crashSignatures = getCrashSignatures(suggestion);
 
-  return [summaryParts, possibleFilename];
-};
-
-export class BugFilerClass extends React.Component {
-  constructor(props) {
-    super(props);
-
-    const {
-      suggestions,
-      suggestion,
-      fullLog,
-      parsedLog,
-      reftestUrl,
-      jobGroupName,
-    } = props;
-
-    const allFailures = suggestions.map((sugg) =>
-      sugg.search
-        .split(' | ')
-        .filter((part) => !omittedLeads.includes(part))
-        .map((item) =>
-          item === 'REFTEST TEST-UNEXPECTED-PASS'
-            ? 'TEST-UNEXPECTED-PASS'
-            : item,
-        ),
-    );
-    const thisFailure = allFailures.map((f) => f.join(' | ')).join('\n');
-
-    const parsedSummary = parseSummary(suggestion);
-    let summaryString = parsedSummary[0].join(' | ');
-    if (jobGroupName.toLowerCase().includes('reftest')) {
-      const re = /layout\/reftests\//gi;
-      summaryString = summaryString.replace(re, '');
-    }
-
-    const crash = suggestion.search.match(crashRegex);
-    const crashSignatures = crash
-      ? [crash[0].split('application crashed ')[1]]
-      : [];
-
-    const keywords = [];
-    const isAssertion = [
-      /ASSERTION:/, // binary code
-      /assertion fail/i, // JavaScript
-      /assertion count \d+ is \w+ than expected \d+ assertion/, // layout
-      /AssertionError/, // Marionette
-    ].some((regexp) => regexp.test(summaryString));
-    if (isAssertion) {
+  const keywords = [];
+  let isAssertion = [
+    /ASSERTION:/, // binary code
+    /assertion fail/i, // JavaScript
+    /assertion count \d+ is \w+ than expected \d+ assertion/, // layout
+  ].some((regexp) => regexp.test(summaryString));
+  if (isAssertion) {
+    if (
+      /java.lang.AssertionError/.test(summaryString) &&
+      selectedJob.job_type_name.includes('junit')
+    ) {
+      isAssertion = false;
+    } else {
       keywords.push('assertion');
     }
-
-    const checkedLogLinks = new Map([
-      ['Parsed log', parsedLog],
-      ['Full log', fullLog],
-    ]);
-
-    if (reftestUrl) {
-      checkedLogLinks.set('Reftest URL', reftestUrl);
-    }
-
-    this.state = {
-      tooltipOpen: {},
-      summary: `Intermittent ${summaryString}`,
-      productSearch: null,
-      suggestedProducts: [],
-      isFilerSummaryVisible: false,
-      selectedProduct: null,
-      isIntermittent: true,
-      comment: '',
-      searching: false,
-      parsedSummary,
-      checkedLogLinks,
-      thisFailure,
-      keywords,
-      crashSignatures,
-    };
   }
 
-  getUnhelpfulSummaryReason(summary) {
-    const { suggestion } = this.props;
-    const searchTerms = suggestion.search_terms;
-
-    if (searchTerms.length === 0) {
-      return 'Selected failure does not contain any searchable terms.';
-    }
-    if (searchTerms.every((term) => !summary.includes(term))) {
-      return "Summary does not include the full text of any of the selected failure's search terms:";
-    }
-    return '';
+  if (selectedJob.job_type_name.toLowerCase().includes('test-verify')) {
+    keywords.push('test-verify-fail');
   }
 
-  // Some job types are special, lets explicitly handle them.
-  getSpecialProducts(fp) {
-    const { jobGroupName } = this.props;
-    const { suggestedProducts } = this.state;
-    const newProducts = [];
+  const checkedLogLinks = new Map([
+    ['Parsed log', parsedLog],
+    ['Full log', fullLog],
+  ]);
 
-    if (suggestedProducts.length === 0) {
-      const jg = jobGroupName.toLowerCase();
-
-      if (jg.includes('talos')) {
-        newProducts.push('Testing :: Talos');
-      }
-      if (
-        jg.includes('mochitest') &&
-        (fp.includes('webextensions/') || fp.includes('components/extensions'))
-      ) {
-        newProducts.push('WebExtensions :: General');
-      }
-      if (jg.includes('mochitest') && fp.includes('webrtc/')) {
-        newProducts.push('Core :: WebRTC');
-      }
-    }
-    return newProducts;
+  if (reftestUrl) {
+    checkedLogLinks.set('Reftest URL', reftestUrl);
   }
 
-  /**
-   *  'enter' from the product search input should initiate the search
-   */
-  productSearchEnter = (ev) => {
-    const { keyCode, target } = ev;
+  const jg = selectedJob.job_group_name.toLowerCase();
+  if (
+    jg.includes('xpcshell') ||
+    jg.includes('mochitest') ||
+    jg.includes('web platform tests') ||
+    jg.includes('reftest') ||
+    jg.includes('talos') ||
+    selectedJob.job_type_name.includes('junit') ||
+    selectedJob.job_type_name.includes('marionette')
+  ) {
+    // simple hack to make sure we have a testcase in the summary
+    let isTestPath = [
+      /.*test_.*\.js/, // xpcshell
+      /.*test_.*\.html/, // mochitest
+      /.*test_.*\.xhtml/, // mochitest-chrome
+      /.*browser_.*\.html/, // b-c
+      /.*browser_.*\.js/, // b-c
+      /.*test_.*\.py/, // marionette
+      /.*\.ini/, // when we have a failure on shutdown (crash/leak/timeout)
+      /.*\.toml/, // when we have a failure on shutdown (crash/leak/timeout)
+      /.*org.mozilla.geckoview.test.*/, // junit
+    ].some((regexp) => regexp.test(summaryString));
 
-    this.setState({ productSearch: target.value }, () => {
-      if (keyCode === 13) {
-        this.findProduct();
+    if (jg.includes('talos')) {
+      isTestPath = [
+        /.*PROCESS-CRASH \| .*/, // crashes
+      ].some((regexp) => regexp.test(suggestion.search));
+    } else if (jg.includes('web platform tests') || jg.includes('reftest')) {
+      // account for <filename>.html?blah... | failure message
+      isTestPath = [
+        /.*\.js(\?.*| )\|/,
+        /.*\.html(\?.*| )\|/,
+        /.*\.htm(\?.*| )\|/,
+        /.*\.xhtml(\?.*| )\|/,
+        /.*\.xht(\?.*| )\|/,
+        /.*\.mp4 \|/, // reftest specific
+        /.*\.webm \|/, // reftest specific
+        / \| .*\.js(\?.*)?/, // crash format
+        / \| .*\.html(\?.*)?/,
+        / \| .*\.htm(\?.*)?/,
+        / \| .*\.xhtml(\?.*)?/,
+        / \| .*\.xht(\?.*)?/,
+        / \| .*.mp4/, // reftest specific
+        / \| .*\.webm/, // reftest specific
+      ].some((regexp) => regexp.test(summaryString));
+    }
+
+    if (crashSignatures.length > 0) {
+      isTestPath = false;
+      const parts = summaryString.split(' | ');
+      summaryString = `${parts[0]} | single tracking bug`;
+      keywords.push('intermittent-testcase');
+    }
+
+    // trimming params from end of a test case name when filing for stb
+    let trimParams = false;
+
+    // only handle straight forward reftest pixel/color errors
+    if (
+      isTestPath &&
+      selectedJob.job_group_name.includes('reftest') &&
+      !/.*image comparison, max difference.*/.test(summaryString)
+    ) {
+      isTestPath = false;
+    } else if (
+      jg.includes('web platform tests') ||
+      selectedJob.job_type_name.includes('marionette')
+    ) {
+      trimParams = true;
+    }
+
+    const isPerfTest = [
+      /.*browser\/base\/content\/test\/performance.*/,
+    ].some((regexp) => regexp.test(summaryString));
+
+    // If not leak
+    if (!isAssertion && !isPerfTest && isTestPath) {
+      const parts = summaryString.split(' | ');
+      // split('?') is for removing `?params...` from the test name
+      if (parts.length === 2 || parts.length === 1) {
+        summaryString = `${
+          trimParams ? parts[0].split('?')[0].split(' ')[0] : parts[0]
+        } | single tracking bug`;
+        keywords.push('intermittent-testcase');
+      } else if (parts.length === 3) {
+        summaryString = `${
+          trimParams ? parts[1].split('?')[0].split(' ')[0] : parts[1]
+        } | single tracking bug`;
+        keywords.push('intermittent-testcase');
       }
-    });
+    }
+  }
+
+  return {
+    summary: `Intermittent ${summaryString}`,
+    productSearch: null,
+    suggestedProducts: [],
+    isFilerSummaryVisible: false,
+    selectedProduct: null,
+    isIntermittent: true,
+    isSecurityIssue: false,
+    launchConfirmFailure: true,
+    comment: '',
+    searching: false,
+    // used by test
+    parsedSummary,
+    checkedLogLinks,
+    thisFailure,
+    keywords,
+    crashSignatures,
   };
+}
 
-  /*
-   *  Attempt to find a good product/component for this failure
-   */
-  findProduct = async () => {
-    const { jobGroupName, notify } = this.props;
-    const { productSearch, parsedSummary } = this.state;
+export function BugFilerClass(props) {
+  const {
+    isOpen,
+    toggle,
+    suggestion,
+    suggestions,
+    fullLog,
+    parsedLog,
+    reftestUrl,
+    successCallback,
+    platform,
+    selectedJob,
+    currentRepo,
+  } = props;
 
-    let possibleFilename = null;
-    let suggestedProductsSet = new Set();
+  const decisionTaskMap = useSelector(
+    (state) => state.pushes.decisionTaskMap,
+  );
 
-    this.setState({ searching: true });
+  const [state, setState] = useState(() =>
+    computeInitialBugFilerState(props),
+  );
 
-    if (productSearch) {
+  const updateState = useCallback(
+    (updates) => setState((prev) => ({ ...prev, ...updates })),
+    [],
+  );
+
+  const {
+    productSearch,
+    suggestedProducts,
+    thisFailure,
+    isFilerSummaryVisible,
+    isIntermittent,
+    isSecurityIssue,
+    launchConfirmFailure,
+    summary,
+    searching,
+    checkedLogLinks,
+    selectedProduct,
+    comment,
+    regressedBy,
+    seeAlso,
+    keywords,
+    crashSignatures,
+  } = state;
+
+  // checkForSecurityIssue whenever summary or comment changes
+  useEffect(() => {
+    if (isSecurityIssue) return;
+
+    const inputToCheck = `${summary}\n${comment}`;
+    const potentialSecurityIssues = [
+      '65656565',
+      'access-violation',
+      'data race',
+      'double-free',
+      'e5e5',
+      'f2f2f2f2',
+      'global-buffer-overflow',
+      'heap-buffer-overflow',
+      'heap-use-after-free',
+      'negative-size-param',
+      'stack-buffer-overflow',
+      'stack-use-after-scope',
+      'use-after-poison',
+    ];
+    for (const searchTerm of potentialSecurityIssues) {
+      if (inputToCheck.includes(searchTerm)) {
+        updateState({ isSecurityIssue: true });
+        break;
+      }
+    }
+  }, [summary, comment, isSecurityIssue, updateState]);
+
+  // findProductByPath on mount
+  useEffect(() => {
+    const findProductByPath = async () => {
+      const pathEnd = suggestion.path_end;
+
+      if (
+        !crashSignatures.length &&
+        (platform.startsWith('AC-') || platform.startsWith('fenix-'))
+      ) {
+        updateState({
+          suggestedProducts: ['Firefox for Android :: General'],
+          selectedProduct: 'Firefox for Android :: General',
+          searching: false,
+        });
+        return;
+      }
+
+      if (!crashSignatures.length && platform.startsWith('focus-')) {
+        updateState({
+          suggestedProducts: ['Focus :: General'],
+          selectedProduct: 'Focus :: General',
+          searching: false,
+        });
+        return;
+      }
+
+      if (!pathEnd) {
+        return;
+      }
+
+      /* Don't suggest a Bugzilla product and component because it should be based
+         on the crashing file which is not mentioned in the failure line. */
+      if (crashSignatures.length) {
+        return;
+      }
+
+      let suggestedProductsSet = new Set();
+
+      updateState({ searching: true });
+
       const resp = await fetch(
-        `${bzBaseUrl}rest/prod_comp_search/find/${productSearch}?limit=5`,
+        `/api${bzComponentEndpoint}?path=${encodeURIComponent(pathEnd)}`,
       );
       const data = await resp.json();
-      const products = data.products.filter(
+      const products = data.filter(
         (item) => !!item.product && !!item.component,
       );
       suggestedProductsSet = new Set([
@@ -255,116 +323,77 @@ export class BugFilerClass extends React.Component {
             prod.product + (prod.component ? ` :: ${prod.component}` : ''),
         ),
       ]);
-    } else {
-      let failurePath = parsedSummary[0][0];
+      const newSuggestedProducts = [...suggestedProductsSet];
 
-      // If the "TEST-UNEXPECTED-foo" isn't one of the omitted ones, use the next piece in the summary
-      if (failurePath.includes('TEST-UNEXPECTED-')) {
-        // eslint-disable-next-line prefer-destructuring
-        failurePath = parsedSummary[0][1];
-      }
-      possibleFilename = findFilename(failurePath);
+      updateState({
+        suggestedProducts: newSuggestedProducts,
+        selectedProduct: newSuggestedProducts[0],
+        searching: false,
+      });
+    };
 
-      const lowerJobGroupName = jobGroupName.toLowerCase();
-      // Try to fix up file paths for some job types.
-      if (lowerJobGroupName.includes('spidermonkey')) {
-        failurePath = `js/src/tests/${failurePath}`;
-      }
-      if (lowerJobGroupName.includes('videopuppeteer ')) {
-        failurePath = failurePath.replace('FAIL ', '');
-        failurePath = `dom/media/test/external/external_media_tests/${failurePath}`;
-      }
-      if (lowerJobGroupName.includes('web platform')) {
-        failurePath = failurePath.startsWith('mozilla/tests')
-          ? `testing/web-platform/${failurePath}`
-          : `testing/web-platform/tests${failurePath}`;
-      }
+    findProductByPath();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-      // Search mercurial's moz.build metadata to find products/components
-      fetch(
-        `${hgBaseUrl}mozilla-central/json-mozbuildinfo?p=${failurePath}`,
-      ).then((resp) =>
-        resp.json().then((firstRequest) => {
-          if (firstRequest.error) {
-            notify(
-              'Unable to infer product/component via metadata. Please manually search for a product.',
-            );
-          }
-          if (
-            firstRequest.data &&
-            firstRequest.data.aggregate &&
-            firstRequest.data.aggregate.recommended_bug_component
-          ) {
-            const suggested =
-              firstRequest.data.aggregate.recommended_bug_component;
-            suggestedProductsSet.add(`${suggested[0]} :: ${suggested[1]}`);
-          }
+  const getUnhelpfulSummaryReason = (summaryText) => {
+    const searchTerms = suggestion.search_terms;
 
-          // Make an attempt to find the file path via a dxr file search
-          if (
-            suggestedProductsSet.size === 0 &&
-            possibleFilename &&
-            possibleFilename.length > 4
-          ) {
-            const dxrlink = `${dxrBaseUrl}mozilla-central/search?q=file:${possibleFilename}&redirect=false&limit=5`;
-            // Bug 1358328 - We need to override headers here until DXR returns JSON with the default Accept header
-            fetch(dxrlink, { headers: { Accept: 'application/json' } }).then(
-              (secondRequest) => {
-                const { results } = secondRequest.data;
-                let resultsCount = results.length;
-                // If the search returns too many results, this probably isn't a good search term, so bail
-                if (resultsCount === 0) {
-                  suggestedProductsSet = new Set([
-                    ...suggestedProductsSet,
-                    this.getSpecialProducts(failurePath),
-                  ]);
-                }
-                results.forEach((result) => {
-                  fetch(
-                    `${hgBaseUrl}mozilla-central/json-mozbuildinfo?p=${result.path}`,
-                  ).then((thirdRequest) => {
-                    if (
-                      thirdRequest.data.aggregate &&
-                      thirdRequest.data.aggregate.recommended_bug_component
-                    ) {
-                      const suggested =
-                        thirdRequest.data.aggregate.recommended_bug_component;
-                      suggestedProductsSet.add(
-                        `${suggested[0]} :: ${suggested[1]}`,
-                      );
-                    }
-                    // Only get rid of the throbber when all of these searches have completed
-                    resultsCount -= 1;
-                    if (resultsCount === 0) {
-                      suggestedProductsSet = new Set([
-                        ...suggestedProductsSet,
-                        this.getSpecialProducts(failurePath),
-                      ]);
-                    }
-                  });
-                });
-              },
-            );
-          } else {
-            suggestedProductsSet = new Set([
-              ...suggestedProductsSet,
-              this.getSpecialProducts(failurePath),
-            ]);
-          }
-        }),
-      );
+    if (searchTerms.length === 0) {
+      return 'Selected failure does not contain any searchable terms.';
     }
+    if (searchTerms.every((term) => !summaryText.includes(term))) {
+      return "Summary does not include the full text of any of the selected failure's search terms:";
+    }
+    return '';
+  };
+
+  const productSearchEnter = (ev) => {
+    const { keyCode, target } = ev;
+
+    updateState({ productSearch: target.value });
+    if (keyCode === 13) {
+      // Trigger search after state update via setTimeout
+      setTimeout(() => findProduct(target.value), 0);
+    }
+  };
+
+  const findProduct = async (searchOverride) => {
+    const search = searchOverride || productSearch;
+
+    if (!search) {
+      return;
+    }
+
+    let suggestedProductsSet = new Set();
+
+    updateState({ searching: true });
+
+    const resp = await fetch(
+      `${bzBaseUrl}rest/prod_comp_search/find/${search}?limit=5`,
+    );
+    const data = await resp.json();
+    const products = data.products.filter(
+      (item) => !!item.product && !!item.component,
+    );
+    suggestedProductsSet = new Set([
+      ...suggestedProductsSet,
+      ...products.map(
+        (prod) =>
+          prod.product + (prod.component ? ` :: ${prod.component}` : ''),
+      ),
+    ]);
+
     const newSuggestedProducts = [...suggestedProductsSet];
 
-    this.setState({
+    updateState({
       suggestedProducts: newSuggestedProducts,
       selectedProduct: newSuggestedProducts[0],
       searching: false,
     });
   };
 
-  toggleCheckedLogLink = (name, link) => {
-    const { checkedLogLinks } = this.state;
+  const toggleCheckedLogLink = (name, link) => {
     const newCheckedLogLinks = new Map(checkedLogLinks);
     if (newCheckedLogLinks.has(name)) {
       newCheckedLogLinks.delete(name);
@@ -372,26 +401,26 @@ export class BugFilerClass extends React.Component {
       newCheckedLogLinks.set(name, link);
     }
 
-    this.setState({ checkedLogLinks: newCheckedLogLinks });
+    updateState({ checkedLogLinks: newCheckedLogLinks });
   };
 
-  /*
-   *  Actually send the gathered information to bugzilla.
-   */
-  submitFiler = async () => {
-    const {
-      summary,
-      selectedProduct,
-      comment,
-      isIntermittent,
-      checkedLogLinks,
-      regressedBy,
-      seeAlso,
-      keywords,
-      crashSignatures,
-    } = this.state;
-    const { toggle, successCallback, notify } = this.props;
+  const submitFailure = (source, status, statusText, data) => {
+    let failureString = `${source} returned status ${status} (${statusText})`;
+    if (data?.failure) {
+      failureString += `\n\n${data.failure}`;
+    }
+    if (status === 403) {
+      failureString +=
+        '\n\nAuthentication failed. Has your Treeherder session expired?';
+    }
+    notify(failureString, 'danger', { sticky: true });
+  };
 
+  const handleConfirmFailure = async () => {
+    confirmFailure(selectedJob, notify, decisionTaskMap, currentRepo);
+  };
+
+  const submitFiler = async () => {
     if (!selectedProduct) {
       notify(
         'Please select (or search and select) a product/component pair to continue',
@@ -420,29 +449,38 @@ export class BugFilerClass extends React.Component {
       .join('\n');
 
     // Join that with the comment separated with a hard rule.
-    const descriptionStrings = `${logLinks}\n\n---\n\`\`\`\n${comment}\`\`\``;
+    const descriptionStrings = `${logLinks}\n\n---\n\`\`\`\n${comment}\n\`\`\``;
 
+    const keywordsCopy = [...keywords];
     if (isIntermittent) {
-      keywords.push('intermittent-failure');
+      keywordsCopy.push('intermittent-failure');
     }
     let priority = 'P5';
-    const crashSignature = crashSignatures.join('\n');
+    let severity = 'S4';
 
+    const crashSignature = crashSignatures.join('\n');
     if (crashSignature.length > 0) {
-      keywords.push('crash');
-      // Set no priority for crashes to get them included in triage meetings.
+      keywordsCopy.push('crash');
+      // Set no priority and severity to get them included in triage meetings.
       priority = '--';
+      severity = '--';
+    }
+
+    if (isSecurityIssue) {
+      // Set no priority and severity to get them included in triage meetings.
+      priority = '--';
+      severity = '--';
     }
 
     // Use of 'Regressed By' field shall add 'regression' to keywords.
     if (regressedBy) {
-      keywords.push('regression');
+      keywordsCopy.push('regression');
     }
 
     /* Intermittent bugs in the Core :: DOM: Security component need to have the
        whiteboard '[domsecurity-intermittent]' to support filtering by the
        triagers. Contact person is Christoph Kerschbaumer. */
-    const whiteboard =
+    let whiteboard =
       isIntermittent && product === 'Core' && component === 'DOM: Security'
         ? '[domsecurity-intermittent]'
         : '';
@@ -461,6 +499,11 @@ export class BugFilerClass extends React.Component {
       priority = '--';
     }
 
+    if (launchConfirmFailure && keywordsCopy.includes('intermittent-testcase')) {
+      // Launch confirm failure task
+      handleConfirmFailure();
+      whiteboard += '[collect_confirm_failure]';
+    }
     // Fetch product information from bugzilla to get version numbers, then
     // submit the new bug.  Only request the versions because some products
     // take quite a long time to fetch the full object
@@ -479,14 +522,15 @@ export class BugFilerClass extends React.Component {
           product,
           component,
           summary,
-          keywords,
+          keywords: keywordsCopy,
           whiteboard,
           version: version.name,
           regressed_by: regressedBy,
           see_also: seeAlso,
           crash_signature: crashSignature,
-          severity: 'normal',
+          severity,
           priority,
+          is_security_issue: isSecurityIssue,
           comment: descriptionStrings,
           comment_tags: 'treeherder',
         };
@@ -495,15 +539,27 @@ export class BugFilerClass extends React.Component {
           getApiUrl('/bugzilla/create_bug/'),
           payload,
         );
+        if (data.internal_id) {
+          // Directly update internal issue from suggestions
+          const internalBugs = suggestions
+            .flatMap((s) => s.bugs.open_recent)
+            .filter((bug) => bug.id === null);
+          const existingBug = internalBugs.filter(
+            (bug) => bug.internal_id === data.internal_id,
+          )[0];
+          if (existingBug) {
+            existingBug.id = data.id;
+          }
+        }
 
         if (!failureStatus) {
           toggle();
           successCallback(data);
         } else {
-          this.submitFailure('Treeherder Bug Filer API', failureStatus, data);
+          submitFailure('Treeherder Bug Filer API', failureStatus, data);
         }
       } else {
-        this.submitFailure(
+        submitFailure(
           'Bugzilla',
           productResp.status,
           productResp.statusText,
@@ -515,173 +571,122 @@ export class BugFilerClass extends React.Component {
     }
   };
 
-  submitFailure = (source, status, statusText, data) => {
-    const { notify } = this.props;
+  const searchTerms = suggestion.search_terms;
+  const renderedCrashSignatures = getCrashSignatures(suggestion);
+  const unhelpfulSummaryReason = getUnhelpfulSummaryReason(summary);
 
-    let failureString = `${source} returned status ${status}(${statusText})`;
-    if (data && data.failure) {
-      failureString += `\n\n${data.failure}`;
-    }
-    if (status === 403) {
-      failureString +=
-        '\n\nAuthentication failed. Has your Treeherder session expired?';
-    }
-    notify(failureString, 'danger', { sticky: true });
-  };
-
-  toggleTooltip = (key) => {
-    const { tooltipOpen } = this.state;
-    this.setState({
-      tooltipOpen: { ...tooltipOpen, [key]: !tooltipOpen[key] },
-    });
-  };
-
-  render() {
-    const {
-      isOpen,
-      toggle,
-      suggestion,
-      parsedLog,
-      fullLog,
-      reftestUrl,
-    } = this.props;
-    const {
-      productSearch,
-      suggestedProducts,
-      thisFailure,
-      isFilerSummaryVisible,
-      isIntermittent,
-      summary,
-      searching,
-      checkedLogLinks,
-      tooltipOpen,
-      selectedProduct,
-    } = this.state;
-    const searchTerms = suggestion.search_terms;
-    const crash = summary.match(crashRegex);
-    const crashSignatures = crash
-      ? [crash[0].split('application crashed ')[1]]
-      : [];
-    const unhelpfulSummaryReason = this.getUnhelpfulSummaryReason(summary);
-
-    return (
-      <div>
-        <Modal isOpen={isOpen} toggle={toggle} size="lg">
-          <ModalHeader toggle={toggle}>Intermittent Bug Filer</ModalHeader>
-          <ModalBody>
-            <form className="d-flex flex-column">
-              <div className="d-inline-flex">
-                <Input
+  return (
+    <div>
+      <Modal show={isOpen} onHide={toggle} size="lg">
+        <Modal.Header closeButton>
+          <Modal.Title>Intermittent Bug Filer</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <form className="d-flex flex-column">
+            <div className="d-inline-flex">
+              <OverlayTrigger
+                placement="top"
+                overlay={<Tooltip>Manually search for a product</Tooltip>}
+              >
+                <Form.Control
                   name="modalProductFinderSearch"
                   id="modalProductFinderSearch"
-                  onKeyDown={this.productSearchEnter}
+                  onKeyDown={productSearchEnter}
                   onChange={(evt) =>
-                    this.setState({ productSearch: evt.target.value })
+                    updateState({ productSearch: evt.target.value })
                   }
                   type="text"
                   placeholder="e.g. Firefox, Toolkit, Testing"
                   className="flex-fill flex-grow-1"
                 />
-                <Tooltip
-                  target="modalProductFinderSearch"
-                  isOpen={tooltipOpen.modalProductFinderSearch}
-                  toggle={() => this.toggleTooltip('modalProductFinderSearch')}
-                >
-                  Manually search for a product
-                </Tooltip>
-                <Button
-                  color="secondary"
-                  className="ml-1 btn-sm"
-                  type="button"
-                  onClick={this.findProduct}
-                >
-                  Find Product
-                </Button>
-              </div>
-              <div>
-                {!!productSearch && searching && (
-                  <div>
-                    <FontAwesomeIcon
-                      icon={faSpinner}
-                      pulse
-                      className="th-spinner-lg"
-                      title="Searching..."
-                    />
-                    Searching {productSearch}
-                  </div>
-                )}
-                <FormGroup tag="fieldset" className="mt-1">
-                  {suggestedProducts.map((product) => (
-                    <div
-                      className="ml-4"
-                      key={`modalProductSuggestion${product}`}
+              </OverlayTrigger>
+              <Button
+                variant="secondary"
+                className="ms-1 btn-sm"
+                type="button"
+                onClick={() => findProduct()}
+              >
+                Find Product
+              </Button>
+            </div>
+            <div>
+              {!!productSearch && searching && (
+                <div>
+                  <FontAwesomeIcon
+                    icon={faSpinner}
+                    pulse
+                    className="th-spinner-lg"
+                    title="Searching..."
+                  />
+                  Searching {productSearch}
+                </div>
+              )}
+              <Form.Group tag="fieldset" className="mt-1 mb-3">
+                {suggestedProducts.map((product) => (
+                  <Form.Check
+                    key={`modalProductSuggestion${product}`}
+                    type="radio"
+                    id={`product-${product}`}
+                    label={product}
+                    value={product}
+                    checked={product === selectedProduct}
+                    onChange={(evt) =>
+                      updateState({ selectedProduct: evt.target.value })
+                    }
+                    name="productGroup"
+                  />
+                ))}
+              </Form.Group>
+            </div>
+            <Form.Label htmlFor="summary">Summary:</Form.Label>
+            <div className="d-flex">
+              {!!unhelpfulSummaryReason && (
+                <div>
+                  <div className="text-danger">
+                    <OverlayTrigger
+                      placement="top"
+                      overlay={
+                        <Tooltip>
+                          This can cause poor bug suggestions to be generated
+                        </Tooltip>
+                      }
                     >
-                      <Label check>
-                        <Input
-                          type="radio"
-                          value={product}
-                          checked={product === selectedProduct}
-                          onChange={(evt) =>
-                            this.setState({ selectedProduct: evt.target.value })
-                          }
-                          name="productGroup"
-                        />
-                        {product}
-                      </Label>
-                    </div>
-                  ))}
-                </FormGroup>
-              </div>
-              <Label for="summary">Summary:</Label>
-              <div className="d-flex">
-                {!!unhelpfulSummaryReason && (
-                  <div>
-                    <div className="text-danger">
                       <FontAwesomeIcon
                         icon={faExclamationTriangle}
                         id="unhelpful-summary-reason"
                       />
-                      Warning: {unhelpfulSummaryReason}
-                      <Tooltip
-                        target="unhelpful-summary-reason"
-                        isOpen={tooltipOpen.unhelpfulSummaryReason}
-                        toggle={() =>
-                          this.toggleTooltip('unhelpfulSummaryReason')
-                        }
-                      >
-                        This can cause poor bug suggestions to be generated
-                      </Tooltip>
-                    </div>
-                    {searchTerms.map((term) => (
-                      <div className="text-monospace pl-3" key={term}>
-                        {term}
-                      </div>
-                    ))}
+                    </OverlayTrigger>
+                    Warning: {unhelpfulSummaryReason}
                   </div>
-                )}
-                <Input
-                  id="summary"
-                  className="flex-grow-1"
-                  type="text"
-                  placeholder="Intermittent..."
-                  pattern=".{0,255}"
-                  onChange={(evt) =>
-                    this.setState({ summary: evt.target.value })
-                  }
-                  value={summary}
-                />
-                <Tooltip
-                  target="toggle-failure-lines"
-                  isOpen={tooltipOpen.toggleFailureLines}
-                  toggle={() => this.toggleTooltip('toggleFailureLines')}
-                >
-                  {isFilerSummaryVisible
-                    ? 'Hide all failure lines for this job'
-                    : 'Show all failure lines for this job'}
-                </Tooltip>
+                  {searchTerms.map((term) => (
+                    <div className="font-monospace ps-3" key={term}>
+                      {term}
+                    </div>
+                  ))}
+                </div>
+              )}
+              <Form.Control
+                id="summary"
+                className="flex-grow-1"
+                type="text"
+                placeholder="Intermittent..."
+                pattern=".{0,255}"
+                onChange={(evt) => updateState({ summary: evt.target.value })}
+                value={summary}
+              />
+              <OverlayTrigger
+                placement="top"
+                overlay={
+                  <Tooltip>
+                    {isFilerSummaryVisible
+                      ? 'Hide all failure lines for this job'
+                      : 'Show all failure lines for this job'}
+                  </Tooltip>
+                }
+              >
                 <FontAwesomeIcon
                   onClick={() =>
-                    this.setState({
+                    updateState({
                       isFilerSummaryVisible: !isFilerSummaryVisible,
                     })
                   }
@@ -691,190 +696,198 @@ export class BugFilerClass extends React.Component {
                       : faChevronCircleDown
                   }
                   size="lg"
-                  className="pointable align-bottom pt-2 ml-1"
+                  className="pointable align-bottom pt-2 ms-1"
                   id="toggle-failure-lines"
                   title={isFilerSummaryVisible ? 'collapse' : 'expand'}
                 />
-                <span
-                  id="summaryLength"
-                  className={`ml-1 font-weight-bold lg ${
-                    summary.length > 255 ? 'text-danger' : 'text-success'
-                  }`}
-                >
-                  {summary.length}
-                </span>
-              </div>
-              {isFilerSummaryVisible && (
-                <span>
-                  <Input
-                    className="w-100"
-                    type="textarea"
-                    value={thisFailure}
-                    readOnly
-                    onChange={(evt) =>
-                      this.setState({ thisFailure: evt.target.value })
-                    }
-                  />
-                </span>
-              )}
-              <div className="ml-5 mt-2">
-                <div>
-                  <Label>
-                    <Input
-                      type="checkbox"
-                      checked={checkedLogLinks.has('Parsed log')}
-                      onChange={() =>
-                        this.toggleCheckedLogLink('Parsed log', parsedLog)
-                      }
-                    />
+              </OverlayTrigger>
+              <span
+                id="summaryLength"
+                className={`ms-1 font-weight-bold lg align-self-center ${
+                  summary.length > 255 ? 'text-danger' : 'text-success'
+                }`}
+              >
+                {summary.length}
+              </span>
+            </div>
+            {isFilerSummaryVisible && (
+              <span>
+                <Form.Control
+                  className="w-100"
+                  as="textarea"
+                  value={thisFailure}
+                  readOnly
+                  onChange={(evt) =>
+                    updateState({ thisFailure: evt.target.value })
+                  }
+                />
+              </span>
+            )}
+            <div className="ms-4 mt-2">
+              <Form.Check
+                className="mb-2"
+                type="checkbox"
+                id="parsed-log-checkbox"
+                checked={checkedLogLinks.has('Parsed log')}
+                onChange={() =>
+                  toggleCheckedLogLink('Parsed log', parsedLog)
+                }
+                label={
+                  <a
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    href={parsedLog}
+                  >
+                    Include Parsed Log Link
+                  </a>
+                }
+              />
+              <Form.Check
+                className="mb-1"
+                type="checkbox"
+                id="full-log-checkbox"
+                checked={checkedLogLinks.has('Full log')}
+                onChange={() =>
+                  toggleCheckedLogLink('Full log', fullLog)
+                }
+                label={
+                  <a target="_blank" rel="noopener noreferrer" href={fullLog}>
+                    Include Full Log Link
+                  </a>
+                }
+              />
+              {!!reftestUrl && (
+                <Form.Check
+                  className="mb-1"
+                  type="checkbox"
+                  id="reftest-url-checkbox"
+                  checked={checkedLogLinks.has('Reftest URL')}
+                  onChange={() =>
+                    toggleCheckedLogLink('Reftest URL', reftestUrl)
+                  }
+                  label={
                     <a
                       target="_blank"
                       rel="noopener noreferrer"
-                      href={parsedLog}
+                      href={reftestUrl}
                     >
-                      Include Parsed Log Link
+                      Include Reftest Viewer Link
                     </a>
-                  </Label>
-                </div>
-                <div>
-                  <Label>
-                    <Input
-                      type="checkbox"
-                      checked={checkedLogLinks.has('Full log')}
-                      onChange={() =>
-                        this.toggleCheckedLogLink('Full log', fullLog)
-                      }
-                    />
-                    <a target="_blank" rel="noopener noreferrer" href={fullLog}>
-                      Include Full Log Link
-                    </a>
-                  </Label>
-                </div>
-                {!!reftestUrl && (
-                  <div>
-                    <Label>
-                      <Input
-                        type="checkbox"
-                        checked={checkedLogLinks.has('Reftest URL')}
-                        onChange={() =>
-                          this.toggleCheckedLogLink('Reftest URL', reftestUrl)
-                        }
-                      />
-                      <a
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        href={reftestUrl}
-                      >
-                        Include Reftest Viewer Link
-                      </a>
-                    </Label>
-                  </div>
-                )}
-              </div>
-              <div className="d-flex flex-column">
-                <Label for="summary-input">Comment:</Label>
-                <Input
-                  onChange={(evt) =>
-                    this.setState({ comment: evt.target.value })
                   }
-                  type="textarea"
-                  id="summary-input"
-                  className="flex-grow-1"
-                  rows={5}
                 />
-              </div>
-              <div className="d-inline-flex mt-2 ml-5">
-                <div className="mt-2">
-                  <Label>
-                    <Input
-                      onChange={() =>
-                        this.setState({ isIntermittent: !isIntermittent })
-                      }
-                      type="checkbox"
-                      checked={isIntermittent}
-                    />
-                    This is an intermittent failure
-                  </Label>
-                </div>
-                <div className="d-inline-flex ml-2">
-                  <Input
+              )}
+            </div>
+            <div className="d-flex flex-column">
+              <Form.Label htmlFor="summary-input">Comment:</Form.Label>
+              <Form.Control
+                onChange={(evt) =>
+                  updateState({ comment: evt.target.value })
+                }
+                as="textarea"
+                id="summary-input"
+                className="flex-grow-1"
+                rows={5}
+              />
+            </div>
+            <div className="ms-4">
+              <div className="intermittent-failure-fields d-inline-flex flex-start mb-1 mt-2">
+                <Form.Check
+                  type="checkbox"
+                  id="intermittent-checkbox"
+                  checked={isIntermittent}
+                  onChange={() =>
+                    updateState({ isIntermittent: !isIntermittent })
+                  }
+                  className="mt-4"
+                  label="This is an intermittent failure"
+                />
+                <OverlayTrigger
+                  placement="top"
+                  overlay={<Tooltip>Comma-separated list of bugs</Tooltip>}
+                >
+                  <Form.Control
                     id="regressedBy"
                     type="text"
-                    className="ml-1"
+                    className="ms-1"
                     onChange={(evt) =>
-                      this.setState({ regressedBy: evt.target.value })
+                      updateState({ regressedBy: evt.target.value })
                     }
                     placeholder="Regressed by"
                   />
-                  <Tooltip
-                    target="regressedBy"
-                    placement="bottom"
-                    isOpen={tooltipOpen.regressedBy}
-                    toggle={() => this.toggleTooltip('regressedBy')}
-                  >
-                    Comma-separated list of bugs
-                  </Tooltip>
-                  <Input
+                </OverlayTrigger>
+                <OverlayTrigger
+                  placement="top"
+                  overlay={<Tooltip>Comma-separated list of bugs</Tooltip>}
+                >
+                  <Form.Control
                     id="seeAlso"
-                    className="ml-1"
+                    className="ms-1"
                     type="text"
                     onChange={(evt) =>
-                      this.setState({ seeAlso: evt.target.value })
+                      updateState({ seeAlso: evt.target.value })
                     }
                     placeholder="See also"
                   />
-                  <Tooltip
-                    target="seeAlso"
-                    placement="bottom"
-                    isOpen={tooltipOpen.seeAlso}
-                    toggle={() => this.toggleTooltip('seeAlso')}
-                  >
-                    Comma-separated list of bugs
-                  </Tooltip>
-                </div>
+                </OverlayTrigger>
               </div>
-              {!!crashSignatures.length && (
-                <div>
-                  <Label for="signature-input">Signature:</Label>
-                  <Input
-                    type="textarea"
-                    id="signature-input"
-                    onChange={(evt) =>
-                      this.setState({ crashSignatures: evt.target.value })
+              <Form.Check
+                className="mb-3"
+                type="checkbox"
+                id="security-issue-checkbox"
+                checked={isSecurityIssue}
+                onChange={() =>
+                  updateState({ isSecurityIssue: !isSecurityIssue })
+                }
+                label="Report this as a security issue"
+              />
+              {['autoland', 'mozilla-central', 'try'].includes(
+                currentRepo.name,
+              ) && (
+                <div className="mb-2">
+                  <Form.Check
+                    type="checkbox"
+                    id="confirm-failure-checkbox"
+                    checked={launchConfirmFailure}
+                    onChange={() =>
+                      updateState({
+                        launchConfirmFailure: !launchConfirmFailure,
+                      })
                     }
-                    maxLength="2048"
-                    readOnly
-                    value={crashSignatures.join('\n')}
+                    label="Launch the Confirm Failures task at bug submission"
                   />
                 </div>
               )}
-            </form>
-          </ModalBody>
-          <ModalFooter>
-            <Button color="secondary" onClick={this.submitFiler}>
-              Submit Bug
-            </Button>{' '}
-            <Button color="secondary" onClick={toggle}>
-              Cancel
-            </Button>
-          </ModalFooter>
-        </Modal>
-      </div>
-    );
-  }
+              {!!renderedCrashSignatures.length && (
+                <div>
+                  <Form.Label htmlFor="signature-input">
+                    Signature:
+                  </Form.Label>
+                  <Form.Control
+                    as="textarea"
+                    id="signature-input"
+                    onChange={(evt) =>
+                      updateState({ crashSignatures: evt.target.value })
+                    }
+                    maxLength="2048"
+                    readOnly
+                    value={renderedCrashSignatures.join('\n')}
+                  />
+                </div>
+              )}
+            </div>
+          </form>
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={submitFiler}>
+            Submit Bug
+          </Button>{' '}
+          <Button variant="secondary" onClick={toggle}>
+            Cancel
+          </Button>
+        </Modal.Footer>
+      </Modal>
+    </div>
+  );
 }
 
-BugFilerClass.propTypes = {
-  isOpen: PropTypes.bool.isRequired,
-  toggle: PropTypes.func.isRequired,
-  suggestion: PropTypes.shape({}).isRequired,
-  suggestions: PropTypes.arrayOf(PropTypes.object).isRequired,
-  fullLog: PropTypes.string.isRequired,
-  parsedLog: PropTypes.string.isRequired,
-  reftestUrl: PropTypes.string.isRequired,
-  successCallback: PropTypes.func.isRequired,
-  jobGroupName: PropTypes.string.isRequired,
-  notify: PropTypes.func.isRequired,
-};
-
-export default connect(null, { notify })(BugFilerClass);
+export default BugFilerClass;

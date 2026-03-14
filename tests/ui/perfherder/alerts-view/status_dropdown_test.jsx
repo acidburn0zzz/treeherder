@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { render, waitFor, cleanup, fireEvent } from '@testing-library/react';
 
 import testAlertSummaries from '../../mock/alert_summaries';
@@ -7,7 +7,7 @@ import repos from '../../mock/repositories';
 import StatusDropdown from '../../../../ui/perfherder/alerts/StatusDropdown';
 import issueTrackers from '../../../../treeherder/perf/fixtures/issue_tracker';
 
-const testAlertSummary = testAlertSummaries[0];
+let testAlertSummary = testAlertSummaries[0];
 const testAlerts = testAlertSummary.alerts;
 const testRepoModel = repos[2];
 
@@ -18,14 +18,19 @@ const testUser = {
   email: 'test_user@mozilla.com',
 };
 
+const dummyFrameworkName = 'someTestFramework';
 const testIssueTrackers = issueTrackers.map((issue) => ({
   id: issue.pk,
   issueTrackerUrl: issue.fields.name,
   text: issue.fields.task_base_url,
 }));
 
-const testStatusDropdown = (summaryTags) => {
+const testStatusDropdown = (summaryTags, alertSummary) => {
   testAlertSummary.performance_tags = summaryTags;
+
+  if (alertSummary) {
+    testAlertSummary = alertSummary;
+  }
 
   return render(
     <StatusDropdown
@@ -35,9 +40,9 @@ const testStatusDropdown = (summaryTags) => {
       repoModel={testRepoModel}
       updateViewState={() => {}}
       issueTrackers={testIssueTrackers}
-      bugTemplate={null}
       filteredAlerts={testAlerts}
       performanceTags={testPerformanceTags}
+      frameworks={[{ id: 1, name: dummyFrameworkName }]}
     />,
   );
 };
@@ -47,39 +52,65 @@ afterEach(cleanup);
 test("Summary with no tags shows 'Add tags'", async () => {
   const { getByText } = testStatusDropdown([]);
 
-  const dropdownItem = await waitFor(() => getByText('Add tags'));
+  // Open the status dropdown first
+  const statusDropdown = await waitFor(() => getByText('untriaged'));
+  fireEvent.click(statusDropdown);
 
-  expect(dropdownItem).toBeInTheDocument();
+  // Wait for state update after clicking dropdown
+  await waitFor(() => {
+    const dropdownItem = getByText('Add tags');
+    expect(dropdownItem).toBeInTheDocument();
+  });
 });
 
 test("Summary with tags shows 'Edit tags'", async () => {
   const { getByText } = testStatusDropdown(['harness']);
 
-  const dropdownItem = await waitFor(() => getByText('Edit tags'));
+  // Open the status dropdown first
+  const statusDropdown = await waitFor(() => getByText('untriaged'));
+  fireEvent.click(statusDropdown);
 
-  expect(dropdownItem).toBeInTheDocument();
+  // Wait for state update after clicking dropdown
+  await waitFor(() => {
+    const dropdownItem = getByText('Edit tags');
+    expect(dropdownItem).toBeInTheDocument();
+  });
 });
 
 test("Tags modal opens from 'Add tags'", async () => {
   const { getByText, getByTestId } = testStatusDropdown([]);
 
+  // Open the status dropdown first
+  const statusDropdown = await waitFor(() => getByText('untriaged'));
+  fireEvent.click(statusDropdown);
+
+  // Wait for dropdown to open
   const dropdownItem = await waitFor(() => getByText('Add tags'));
 
   fireEvent.click(dropdownItem);
 
-  const modal = await waitFor(() => getByTestId('tags-modal'));
-
-  expect(modal).toBeInTheDocument();
+  // Wait for state update after clicking dropdown item and modal to appear
+  await waitFor(() => {
+    const modal = getByTestId('tags-modal');
+    expect(modal).toBeInTheDocument();
+  });
 });
 
 test("Tags modal opens from 'Edit tags'", async () => {
   const { getByText, getByTestId } = testStatusDropdown(['harness']);
 
+  // Open the status dropdown first
+  const statusDropdown = await waitFor(() => getByText('untriaged'));
+  fireEvent.click(statusDropdown);
+
+  // Wait for dropdown to open
   const dropdownItem = await waitFor(() => getByText('Edit tags'));
 
   fireEvent.click(dropdownItem);
 
-  const modal = await waitFor(() => getByTestId('tags-modal'));
-
-  expect(modal).toBeInTheDocument();
+  // Wait for state update after clicking dropdown item and modal to appear
+  await waitFor(() => {
+    const modal = getByTestId('tags-modal');
+    expect(modal).toBeInTheDocument();
+  });
 });

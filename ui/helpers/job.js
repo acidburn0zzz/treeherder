@@ -1,39 +1,36 @@
+import TaskclusterModel from '../models/taskcluster';
+import {
+  getJobButtonInstance,
+  getCurrentlySelectedInstance,
+} from '../hooks/useJobButtonRegistry';
+
 import { thFailureResults, thPlatformMap } from './constants';
 import { getGroupMapKey } from './aggregateId';
 import { getAllUrlParams, getRepo } from './location';
-import { uiJobsUrlBase } from './url';
-
-const btnClasses = {
-  busted: 'btn-red',
-  exception: 'btn-purple',
-  testfailed: 'btn-orange',
-  usercancel: 'btn-pink',
-  retry: 'btn-dkblue',
-  success: 'btn-green',
-  running: 'btn-dkgray',
-  pending: 'btn-ltgray',
-  superseded: 'btn-ltblue',
-  failures: 'btn-red',
-  'in progress': 'btn-dkgray',
-};
+import { getAction } from './taskcluster';
+import { formatTaskclusterError } from './errorMessage';
 
 // failure classification ids that should be shown in "unclassified" mode
-export const thUnclassifiedIds = [1, 7];
+// TODO: consider dropping 8 from this list, only here for full compatibility
+export const thUnclassifiedIds = [1, 6, 7, 8];
 
-// Get the CSS class for job buttons as well as jobs that show in the pinboard.
-// These also apply to result "groupings" like ``failures`` and ``in progress``
-// for the colored filter chicklets on the nav bar.
+// Get the status and classification state for job buttons
+// Returns an object with status value and classified boolean for data attributes
 export const getBtnClass = function getBtnClass(
   resultStatus,
   failureClassificationId,
 ) {
-  let btnClass = btnClasses[resultStatus] || 'btn-default';
+  const status = resultStatus || 'unknown';
 
-  // handle if a job is classified
-  if (failureClassificationId > 1) {
-    btnClass += '-classified';
-  }
-  return btnClass;
+  // Check if a job is classified (> 1 and not "NEW failure" classification == 6)
+  // TODO: consider dropping 8 from this list, only here for full compatibility
+  const isClassified =
+    failureClassificationId > 1 && ![6, 8].includes(failureClassificationId);
+
+  return {
+    status,
+    isClassified,
+  };
 };
 
 export const isReftest = function isReftest(job) {
@@ -53,19 +50,16 @@ export const isPerfTest = function isPerfTest(job) {
   return [job.job_group_name, job.job_type_name].some(
     (name) =>
       name.toLowerCase().includes('talos') ||
-      name.toLowerCase().includes('raptor'),
+      name.toLowerCase().includes('raptor') ||
+      name.toLowerCase().includes('browsertime') ||
+      name.toLowerCase().includes('perftest'),
   );
 };
 
-export const isTestIsolatable = function isTestIsolatable(job) {
-  const isolatableRepos = [
-    'autoland',
-    'mozilla-central',
-    'mozilla-inbound',
-    'try',
-  ];
+export const canConfirmFailure = function canConfirmFailure(job) {
+  const confirmRepos = ['autoland', 'mozilla-central', 'try'];
   const repoName = getRepo();
-  if (!isolatableRepos.includes(repoName)) {
+  if (!confirmRepos.includes(repoName)) {
     return false;
   }
   if (job.job_type_name.toLowerCase().includes('jsreftest')) {
@@ -82,6 +76,72 @@ export const isTestIsolatable = function isTestIsolatable(job) {
   );
 };
 
+export const confirmFailure = async function confirmFailure(
+  job,
+  notify,
+  decisionTaskMap,
+  currentRepo,
+) {
+  const { id: decisionTaskId } = decisionTaskMap[job.push_id];
+
+  if (!canConfirmFailure(job)) {
+    return;
+  }
+
+  if (!job.id) {
+    notify('Job not yet loaded for failure confirmation', 'warning');
+
+    return;
+  }
+
+  if (job.state !== 'completed') {
+    notify('Job not yet completed. Try again later.', 'warning');
+
+    return;
+  }
+
+  TaskclusterModel.load(decisionTaskId, job, currentRepo).then((results) => {
+    try {
+      const confirmFailureAction = getAction(
+        results.actions,
+        'confirm-failures',
+      );
+
+      if (!confirmFailureAction) {
+        notify(
+          'Request to confirm failure via actions.json failed could not find action.',
+          'danger',
+          { sticky: true },
+        );
+        return;
+      }
+
+      return TaskclusterModel.submit({
+        action: confirmFailureAction,
+        decisionTaskId,
+        taskId: results.originalTaskId,
+        input: {},
+        staticActionVariables: results.staticActionVariables,
+        currentRepo,
+      }).then(
+        () => {
+          notify(
+            'Request sent to confirm-failures job via actions.json',
+            'success',
+          );
+        },
+        (e) => {
+          // The full message is too large to fit in a Treeherder
+          // notification box.
+          notify(formatTaskclusterError(e), 'danger', { sticky: true });
+        },
+      );
+    } catch (e) {
+      notify(formatTaskclusterError(e), 'danger', { sticky: true });
+    }
+  });
+};
+
 export const isClassified = function isClassified(job) {
   return !thUnclassifiedIds.includes(job.failure_classification_id);
 };
@@ -90,21 +150,43 @@ export const isUnclassifiedFailure = function isUnclassifiedFailure(job) {
   return thFailureResults.includes(job.result) && !isClassified(job);
 };
 
-// Fetch the React instance of an object from a DOM element.
-// Credit for this approach goes to SO: https://stackoverflow.com/a/48335220/333614
+// Fetch the registered instance of a job button from a DOM element.
+// Uses the job button registry which stores imperative handles for functional components.
+// If the element doesn't have a data-job-id, traverse up the DOM tree to find one.
 export const findInstance = function findInstance(el) {
-  const key = Object.keys(el).find((key) =>
-    key.startsWith('__reactInternalInstance$'),
-  );
-  if (key) {
-    const fiberNode = el[key];
-    return fiberNode && fiberNode.return && fiberNode.return.stateNode;
+  // First check the element itself
+  let jobId = el.getAttribute('data-job-id');
+  if (jobId) {
+    return getJobButtonInstance(jobId);
   }
+
+  // If not found, traverse up the DOM tree to find a parent with data-job-id
+  // This handles clicks on child elements like SVG icons inside job buttons
+  if (typeof el.closest === 'function') {
+    const parentWithJobId = el.closest('[data-job-id]');
+    if (parentWithJobId) {
+      jobId = parentWithJobId.getAttribute('data-job-id');
+      if (jobId) {
+        return getJobButtonInstance(jobId);
+      }
+    }
+  }
+
   return null;
 };
 
 // Fetch the React instance of the currently selected job.
+// Uses the tracked instance first (more reliable), then falls back to DOM query.
+// This avoids race conditions where the DOM might not have the .selected-job class
+// yet because React hasn't re-rendered after setSelected(true) was called.
 export const findSelectedInstance = function findSelectedInstance() {
+  // Try the tracked instance first - this is more reliable
+  const trackedInstance = getCurrentlySelectedInstance();
+  if (trackedInstance) {
+    return trackedInstance;
+  }
+
+  // Fall back to DOM query for backwards compatibility
   const selectedEl = document.querySelector('#push-list .job-btn.selected-job');
 
   if (selectedEl) {
@@ -236,7 +318,8 @@ export const getJobSearchStrHref = function getJobSearchStrHref(jobSearchStr) {
   const params = getAllUrlParams();
   params.set('searchStr', jobSearchStr.split(' '));
 
-  return `${uiJobsUrlBase}?${params.toString()}`;
+  // React Router v6 Link's to={{ search: ... }} adds the ? automatically
+  return params.toString();
 };
 
 export const getTaskRunStr = (job) => `${job.task_id}.${job.retry_id}`;

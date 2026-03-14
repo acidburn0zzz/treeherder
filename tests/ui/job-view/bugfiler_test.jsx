@@ -1,56 +1,150 @@
-import React from 'react';
-import { mount } from 'enzyme/build';
-import fetchMock from 'fetch-mock';
 
-import { hgBaseUrl, bzBaseUrl } from '../../../ui/helpers/url';
+import { Provider } from 'react-redux';
+import thunk from 'redux-thunk';
+import fetchMock from 'fetch-mock';
+import {
+  render,
+  cleanup,
+  fireEvent,
+  screen,
+  waitFor,
+} from '@testing-library/react';
+import configureMockStore from 'redux-mock-store';
+
+import { bzComponentEndpoint, bzBaseUrl } from '../../../ui/helpers/url';
 import { isReftest } from '../../../ui/helpers/job';
 import { BugFilerClass } from '../../../ui/shared/BugFiler';
 
+const mockStore = configureMockStore([thunk]);
+
 describe('BugFiler', () => {
   const fullLog =
-    'https://queue.taskcluster.net/v1/task/AGs4CgN_RnCTb943uQn8NQ/runs/0/artifacts/public/logs/live_backing.log';
+    'https://taskcluster.net/api/queue/v1/task/AGs4CgN_RnCTb943uQn8NQ/runs/0/artifacts/public/logs/live_backing.log';
   const parsedLog =
-    'http://localhost:5000/logviewer.html#?job_id=89017089&repo=mozilla-inbound';
+    'http://localhost:5000/logviewer.html#?job_id=89017089&repo=autoland';
   const reftest = '';
   const selectedJob = {
     job_group_name: 'Mochitests executed by TaskCluster',
     job_type_name: 'test-linux64/debug-mochitest-browser-chrome-10',
     job_type_symbol: 'bc10',
+    platform: 'windows11-64',
   };
   const suggestions = [
-    { search: 'ShutdownLeaks | process() called before end of test suite' },
+    {
+      search: 'ShutdownLeaks | process() called before end of test suite',
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 1,
+      path_end: null,
+      search_terms: [],
+    },
     {
       search:
         'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js | application terminated with exit code 11',
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 2,
+      path_end:
+        'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js',
+      search_terms: [],
     },
     {
       search:
         'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js | application crashed [@ js::GCMarker::eagerlyMarkChildren]',
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 3,
+      path_end:
+        'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js',
+      search_terms: [],
     },
     {
       search:
         'leakcheck | default process: missing output line for total leaks!',
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 4,
+      path_end: null,
+      search_terms: [],
     },
-    { search: '# TBPL FAILURE #' },
+    {
+      search: '# TBPL FAILURE #',
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 5,
+      path_end: null,
+      search_terms: [],
+    },
   ];
+
+  const PdfSuggestions = [
+    {
+      bugs: { open_recent: [], all_others: [] },
+      line_number: 10,
+      path_end: 'browser/extensions/pdfjs/test/browser_pdfjs_views.js',
+      search_terms: [],
+      search:
+        'TEST-UNEXPECTED-FAIL | browser/extensions/pdfjs/test/browser_pdfjs_views.js | Test timed out -',
+      counter: 1,
+      failure_in_new_rev: false,
+    },
+    {
+      bugs: { open_recent: [], all_others: [] },
+      line_number: 235,
+      path_end: 'browser/extensions/pdfjs/test/browser_pdfjs_views.js',
+      search_terms: [],
+      search:
+        'TEST-UNEXPECTED-FAIL | browser/extensions/pdfjs/test/browser_pdfjs_views.js | Found a tab after previous test timed out: about:blank -',
+      counter: 1,
+      failure_in_new_rev: false,
+    },
+    {
+      bugs: { open_recent: [], all_others: [] },
+      line_number: 783,
+      path_end: 'flee',
+      search_terms: [],
+      search: 'REFTEST TEST-UNEXPECTED-PASS | flee | floo',
+      counter: 1,
+      failure_in_new_rev: false,
+    },
+  ];
+
   const successCallback = () => {};
   const toggle = () => {};
   const isOpen = true;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     fetchMock.mock(
-      `${hgBaseUrl}mozilla-central/json-mozbuildinfo?p=browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js`,
-      {
-        aggregate: {
-          bug_component_counts: [[['Firefox', 'Search'], 1]],
-          recommended_bug_component: ['Firefox', 'Search'],
+      `/api${bzComponentEndpoint}?path=browser%2Fextensions%2Fpdfjs%2Ftest%2Fbrowser_pdfjs_views.js`,
+      [
+        {
+          product: 'Mock Product',
+          component: 'Mock Component',
         },
-        files: {
-          'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js': {
-            bug_component: ['Firefox', 'Search'],
-          },
+      ],
+    );
+    fetchMock.mock(
+      `/api${bzComponentEndpoint}?path=browser%2Fcomponents%2Fsearch%2Ftest%2Fbrowser_searchbar_smallpanel_keyboard_navigation.js`,
+      [
+        {
+          product: 'Firefox',
+          component: 'Search',
         },
-      },
+      ],
+    );
+    fetchMock.mock(
+      `/api${bzComponentEndpoint}?path=browser%2Fcomponents%2Fsessionstore%2Ftest%2Fbrowser_625016.js`,
+      [
+        {
+          product: 'Firefox',
+          component: 'Session Restore',
+        },
+      ],
     );
 
     fetchMock.mock(
@@ -73,262 +167,35 @@ describe('BugFiler', () => {
   });
 
   afterEach(() => {
+    cleanup();
     fetchMock.reset();
   });
 
-  const getBugFilerForSummary = (summary) => {
-    const suggestion = {
-      summary,
-      search_terms: [
-        'browser_searchbar_smallpanel_keyboard_navigation.js", "[@ js::GCMarker::eagerlyMarkChildren]',
-      ],
-      search: summary,
-    };
-
-    return mount(
-      <BugFilerClass
-        isOpen={isOpen}
-        toggle={toggle}
-        suggestion={suggestion}
-        suggestions={suggestions}
-        fullLog={fullLog}
-        parsedLog={parsedLog}
-        reftestUrl={isReftest(selectedJob) ? reftest : ''}
-        successCallback={successCallback}
-        jobGroupName={selectedJob.job_group_name}
-        notify={() => {}}
-      />,
-    );
+  const currentRepo = {
+    id: 77,
+    repository_group: {
+      name: 'development',
+      description:
+        'Collection of repositories where code initially lands in the development process',
+    },
+    name: 'autoland',
+    dvcs_type: 'hg',
+    url: 'https://hg.mozilla.org/integration/autoland',
+    branch: null,
+    codebase: 'gecko',
+    description: 'The destination for automatically landed Firefox commits.',
+    active_status: 'active',
+    performance_alerts_enabled: true,
+    expire_performance_data: false,
+    is_try_repo: false,
+    tc_root_url: 'https://firefox-ci-tc.services.mozilla.com',
+    pushLogUrl: 'https://hg.mozilla.org/integration/autoland/pushloghtml',
+    revisionHrefPrefix: 'https://hg.mozilla.org/integration/autoland/rev/',
   };
 
-  test('parses a crash suggestion', () => {
-    const summary =
-      'PROCESS-CRASH | browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js | application crashed [@ js::GCMarker::eagerlyMarkChildren]';
-    const bugFiler = getBugFilerForSummary(summary);
-    const { parsedSummary } = bugFiler.state();
-    expect(parsedSummary[0][0]).toEqual(
-      'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js',
-    );
-  });
-
-  test('should parse mochitest-bc summaries', () => {
-    const rawSummary =
-      'browser/components/sessionstore/test/browser_625016.js | observe1: 1 window in data written to disk - Got 0, expected 1';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'browser/components/sessionstore/test/browser_625016.js',
-    );
-    expect(summary[0][1]).toBe(
-      'observe1: 1 window in data written to disk - Got 0, expected 1',
-    );
-    expect(summary[1]).toBe('browser_625016.js');
-  });
-
-  test('should parse accessibility summaries', () => {
-    const rawSummary =
-      'chrome://mochitests/content/a11y/accessible/tests/mochitest/states/test_expandable.xul' +
-      ' | uncaught exception - TypeError: this.textbox.popup.oneOffButtons is undefined at ' +
-      'searchbar_XBL_Constructor@chrome://browser/content/search/search.xml:95:9';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'accessible/tests/mochitest/states/test_expandable.xul',
-    );
-    expect(summary[0][1]).toBe(
-      'uncaught exception - TypeError: this.textbox.popup.oneOffButtons is undefined at ' +
-        'searchbar_XBL_Constructor@chrome://browser/content/search/search.xml:95:9',
-    );
-    expect(summary[1]).toBe('test_expandable.xul');
-  });
-
-  test('should parse xpcshell summaries', () => {
-    const rawSummary =
-      'xpcshell-child-process.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'dom/indexedDB/test/unit/test_rename_objectStore_errors.js',
-    );
-    expect(summary[0][1]).toBe(
-      'application crashed [@ mozalloc_abort(char const*)]',
-    );
-    expect(summary[1]).toBe('test_rename_objectStore_errors.js');
-  });
-
-  test('should parse xpcshell unpack summaries', () => {
-    const rawSummary =
-      'xpcshell-unpack.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'dom/indexedDB/test/unit/test_rename_objectStore_errors.js',
-    );
-    expect(summary[0][1]).toBe(
-      'application crashed [@ mozalloc_abort(char const*)]',
-    );
-    expect(summary[1]).toBe('test_rename_objectStore_errors.js');
-  });
-
-  test('should parse xpcshell dom summaries', () => {
-    const rawSummary =
-      'xpcshell.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'dom/indexedDB/test/unit/test_rename_objectStore_errors.js',
-    );
-    expect(summary[0][1]).toBe(
-      'application crashed [@ mozalloc_abort(char const*)]',
-    );
-    expect(summary[1]).toBe('test_rename_objectStore_errors.js');
-  });
-
-  test('should parse Windows reftests on C drive summaries', () => {
-    const rawSummary =
-      'file:///C:/slave/test/build/tests/reftest/tests/layout/reftests/w3c-css/submitted/variables/variable-supports-12.html | application timed out after 330 seconds with no output';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'layout/reftests/w3c-css/submitted/variables/variable-supports-12.html',
-    );
-    expect(summary[0][1]).toBe(
-      'application timed out after 330 seconds with no output',
-    );
-    expect(summary[1]).toBe('variable-supports-12.html');
-  });
-
-  test('should parse Linux reftest summaries', () => {
-    const rawSummary =
-      'file:///home/worker/workspace/build/tests/reftest/tests/image/test/reftest/encoders-lossless/size-7x7.png | application timed out after 330 seconds with no output';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'image/test/reftest/encoders-lossless/size-7x7.png',
-    );
-    expect(summary[0][1]).toBe(
-      'application timed out after 330 seconds with no output',
-    );
-    expect(summary[1]).toBe('size-7x7.png');
-  });
-
-  test('should parse Windows reftests on Z drive summaries', () => {
-    const rawSummary =
-      'file:///Z:/task_1491428153/build/tests/reftest/tests/layout/reftests/font-face/src-list-local-full.html == file:///Z:/task_1491428153/build/tests/reftest/tests/layout/reftests/font-face/src-list-local-full-ref.html | image comparison, max difference: 255, number of differing pixels: 5184';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'layout/reftests/font-face/src-list-local-full.html == layout/reftests/font-face/src-list-local-full-ref.html',
-    );
-    expect(summary[0][1]).toBe(
-      'image comparison, max difference: 255, number of differing pixels: 5184',
-    );
-    expect(summary[1]).toBe('src-list-local-full.html');
-  });
-
-  test('should parse android reftests summaries', () => {
-    const rawSummary =
-      'http://10.0.2.2:8854/tests/layout/reftests/css-display/display-contents-style-inheritance-1.html == http://10.0.2.2:8854/tests/layout/reftests/css-display/display-contents-style-inheritance-1-ref.html | image comparison, max difference: 255, number of differing pixels: 699';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe(
-      'layout/reftests/css-display/display-contents-style-inheritance-1.html == layout/reftests/css-display/display-contents-style-inheritance-1-ref.html',
-    );
-    expect(summary[0][1]).toBe(
-      'image comparison, max difference: 255, number of differing pixels: 699',
-    );
-    expect(summary[1]).toBe('display-contents-style-inheritance-1.html');
-  });
-
-  test('should parse reftest unexpected pass summaries', () => {
-    const rawSummary =
-      'REFTEST TEST-UNEXPECTED-PASS | file:///home/worker/workspace/build/tests/reftest/tests/layout/' +
-      'reftests/backgrounds/vector/empty/wide--cover--width.html == file:///home/worker/workspace/' +
-      'build/tests/reftest/tests/layout/reftests/backgrounds/vector/empty/ref-wide-lime.html | image comparison';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe('TEST-UNEXPECTED-PASS');
-    expect(summary[0][1]).toBe(
-      'layout/reftests/backgrounds/vector/empty/wide--cover--width.html == layout/reftests/backgrounds/vector/empty/ref-wide-lime.html',
-    );
-    expect(summary[0][2]).toBe('image comparison');
-    expect(summary[1]).toBe('wide--cover--width.html');
-  });
-
-  test('should parse finding the filename when the `TEST-FOO` is not omitted', () => {
-    const rawSummary =
-      'TEST-UNEXPECTED-CRASH | /service-workers/service-worker/xhr.https.html | expected OK';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const summary = bugFiler.state().parsedSummary;
-    expect(summary[0][0]).toBe('TEST-UNEXPECTED-CRASH');
-    expect(summary[0][1]).toBe(
-      '/service-workers/service-worker/xhr.https.html',
-    );
-    expect(summary[0][2]).toBe('expected OK');
-    expect(summary[1]).toBe('xhr.https.html');
-  });
-
-  test('should set "assertion" keyword if summary contains "assertion fail"', () => {
-    const rawSummary =
-      'Assertion failure: [GFX1]: Failed to create software bitmap: Size(16,8) Code: 0x8899000c, at z:/build/build/src/obj-firefox/dist/include/mozilla/gfx/Logging.h:740';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const { keywords } = bugFiler.state();
-    expect(keywords).toEqual(expect.arrayContaining(['assertion']));
-  });
-
-  test('should set "assertion" keyword if summary contains "ASSERTION:"', () => {
-    const rawSummary =
-      "ASSERTION: No list accessible for listitem accessible!: 'Error', filemozilla/accessible/xul/XULListboxAccessible.cpp, line 478";
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const { keywords } = bugFiler.state();
-    expect(keywords).toEqual(expect.arrayContaining(['assertion']));
-  });
-
-  test('should set "assertion" keyword if summary contains "assertion count d+ is w+ than expected d+ assertion"', () => {
-    const rawSummary =
-      'REFTEST TEST-UNEXPECTED-FAIL | http://10.0.2.2:8854/tests/layout/generic/crashtests/847209.html | assertion count 6 is more than expected 4 assertions';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const { keywords } = bugFiler.state();
-    expect(keywords).toEqual(expect.arrayContaining(['assertion']));
-  });
-
-  test('should set "assertion" keyword if summary contains "AssertionError"', () => {
-    const rawSummary =
-      'TEST-UNEXPECTED-FAIL | testing/marionette/harness/marionette_harness/tests/unit/test_window_rect.py TestWindowRect.test_set_position_and_size | AssertionError: 0 != 10';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const { keywords } = bugFiler.state();
-    expect(keywords).toEqual(expect.arrayContaining(['assertion']));
-  });
-
-  test('should not set "assertion" keyword if summary contains none', () => {
-    const rawSummary =
-      'TEST-UNEXPECTED-FAIL | browser/base/content/test/performance/browser_tabdetach.js | unexpected reflow at scrollByPixels@chrome://global/content/elements/arrowscrollbox.js hit 1 times';
-    const bugFiler = getBugFilerForSummary(rawSummary);
-    const { keywords } = bugFiler.state();
-    expect(keywords).toEqual(expect.not.arrayContaining(['assertion']));
-  });
-
-  test('should strip omitted leads from thisFailure', () => {
-    const suggestions = [
-      {
-        bugs: {},
-        search_terms: [],
-        search:
-          'TEST-UNEXPECTED-FAIL | browser/extensions/pdfjs/test/browser_pdfjs_views.js | Test timed out -',
-      },
-      {
-        bugs: {},
-        search_terms: [],
-        search:
-          'TEST-UNEXPECTED-FAIL | browser/extensions/pdfjs/test/browser_pdfjs_views.js | Found a tab after previous test timed out: about:blank -',
-      },
-      {
-        bugs: {},
-        search_terms: [],
-        search: 'REFTEST TEST-UNEXPECTED-PASS | flee | floo',
-      },
-    ];
-    const bugFiler = mount(
+  const store = mockStore({ pushes: { decisionTaskMap: {} } });
+  const bugFilerComponentSuggestions = (suggestions) => (
+    <Provider store={store}>
       <BugFilerClass
         isOpen={isOpen}
         toggle={toggle}
@@ -338,16 +205,277 @@ describe('BugFiler', () => {
         parsedLog={parsedLog}
         reftestUrl={isReftest(selectedJob) ? reftest : ''}
         successCallback={successCallback}
-        jobGroupName={selectedJob.job_group_name}
-        notify={() => {}}
-      />,
-    );
+        selectedJob={selectedJob}
+        platform={selectedJob.platform}
+        currentRepo={currentRepo}
+      />
+    </Provider>
+  );
 
-    const { thisFailure } = bugFiler.state();
-    expect(thisFailure).toBe(
+  const bugFilerComponentSuggestion = (suggestion) => (
+    <Provider store={store}>
+      <BugFilerClass
+        isOpen={isOpen}
+        toggle={toggle}
+        suggestion={suggestion}
+        suggestions={suggestions}
+        fullLog={fullLog}
+        parsedLog={parsedLog}
+        reftestUrl={isReftest(selectedJob) ? reftest : ''}
+        successCallback={successCallback}
+        selectedJob={selectedJob}
+        platform={selectedJob.platform}
+        currentRepo={currentRepo}
+      />
+    </Provider>
+  );
+
+  async function SummaryAndExpected(summary) {
+    const suggestion = {
+      summary,
+      search_terms: [
+        'browser_searchbar_smallpanel_keyboard_navigation.js", "[@ js::GCMarker::eagerlyMarkChildren]',
+      ],
+      search: summary,
+      bugs: { open_recent: [], all_others: [] },
+      counter: 1,
+      failure_in_new_rev: false,
+      line_number: 1,
+      path_end:
+        'browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js',
+    };
+
+    render(bugFilerComponentSuggestion(suggestion));
+
+    // Wait for async findProductByPath to complete
+    await waitFor(() => {
+      expect(screen.getByText('Intermittent Bug Filer')).toBeInTheDocument();
+    });
+
+    const area = screen.getAllByRole('textbox');
+    // TODO: hardcoded '1' in the array index
+    // TODO: this used to check specific areas of summary,
+    //       I cannot find the parts individually in the rendered html.
+    return area[1];
+  }
+
+  test('parses a crash suggestion', async () => {
+    const rawSummary =
+      'PROCESS-CRASH | browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js | application crashed [@ js::GCMarker::eagerlyMarkChildren]';
+    const expected =
+      'Intermittent browser/components/search/test/browser_searchbar_smallpanel_keyboard_navigation.js | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse mochitest-bc summaries', async () => {
+    const rawSummary =
+      'browser/components/sessionstore/test/browser_625016.js | observe1: 1 window in data written to disk - Got 0, expected 1';
+    const expected =
+      'Intermittent browser/components/sessionstore/test/browser_625016.js | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse accessibility summaries', async () => {
+    const rawSummary =
+      'chrome://mochitests/content/a11y/accessible/tests/mochitest/states/test_expandable.xul' +
+      ' | uncaught exception - TypeError: this.textbox.popup.oneOffButtons is undefined at ' +
+      'searchbar_XBL_Constructor@chrome://browser/content/search/search.xml:95:9';
+    const expected =
+      'Intermittent accessible/tests/mochitest/states/test_expandable.xul | uncaught exception - TypeError: this.textbox.popup.oneOffButtons is undefined at searchbar_XBL_Constructor@chrome://browser/content/search/search.xml:95:9';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse xpcshell summaries', async () => {
+    const rawSummary =
+      'xpcshell-child-process.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
+    const expected =
+      'Intermittent dom/indexedDB/test/unit/test_rename_objectStore_errors.js | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse xpcshell unpack summaries', async () => {
+    const rawSummary =
+      'xpcshell-unpack.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
+    const expected =
+      'Intermittent dom/indexedDB/test/unit/test_rename_objectStore_errors.js | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse xpcshell dom summaries', async () => {
+    const rawSummary =
+      'xpcshell.ini:dom/indexedDB/test/unit/test_rename_objectStore_errors.js | application crashed [@ mozalloc_abort(char const*)]';
+    const expected =
+      'Intermittent dom/indexedDB/test/unit/test_rename_objectStore_errors.js | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse Windows reftests on C drive summaries', async () => {
+    const rawSummary =
+      'file:///C:/slave/test/build/tests/reftest/tests/layout/reftests/w3c-css/submitted/variables/variable-supports-12.html | application timed out after 330 seconds with no output';
+    const expected =
+      'Intermittent layout/reftests/w3c-css/submitted/variables/variable-supports-12.html | application timed out after 330 seconds with no output';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse Linux reftest summaries', async () => {
+    const rawSummary =
+      'file:///home/worker/workspace/build/tests/reftest/tests/image/test/reftest/encoders-lossless/size-7x7.png | application timed out after 330 seconds with no output';
+    const expected =
+      'Intermittent image/test/reftest/encoders-lossless/size-7x7.png | application timed out after 330 seconds with no output';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse Windows reftests on Z drive summaries', async () => {
+    const rawSummary =
+      'file:///Z:/task_1491428153/build/tests/reftest/tests/layout/reftests/font-face/src-list-local-full.html == file:///Z:/task_1491428153/build/tests/reftest/tests/layout/reftests/font-face/src-list-local-full-ref.html | image comparison, max difference: 255, number of differing pixels: 5184';
+    const expected =
+      'Intermittent layout/reftests/font-face/src-list-local-full.html == layout/reftests/font-face/src-list-local-full-ref.html | image comparison, max difference: 255, number of differing pixels: 5184';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse android reftests summaries', async () => {
+    const rawSummary =
+      'http://10.0.2.2:8854/tests/layout/reftests/css-display/display-contents-style-inheritance-1.html == http://10.0.2.2:8854/tests/layout/reftests/css-display/display-contents-style-inheritance-1-ref.html | image comparison, max difference: 255, number of differing pixels: 699';
+    const expected =
+      'Intermittent layout/reftests/css-display/display-contents-style-inheritance-1.html == layout/reftests/css-display/display-contents-style-inheritance-1-ref.html | image comparison, max difference: 255, number of differing pixels: 699';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should parse reftest unexpected pass summaries', async () => {
+    const rawSummary =
+      'REFTEST TEST-UNEXPECTED-PASS | file:///home/worker/workspace/build/tests/reftest/tests/layout/' +
+      'reftests/backgrounds/vector/empty/wide--cover--width.html == file:///home/worker/workspace/' +
+      'build/tests/reftest/tests/layout/reftests/backgrounds/vector/empty/ref-wide-lime.html | image comparison';
+    const expected =
+      'Intermittent TEST-UNEXPECTED-PASS | layout/reftests/backgrounds/vector/empty/wide--cover--width.html == layout/reftests/backgrounds/vector/empty/ref-wide-lime.html | image comparison';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toHaveValue(expected);
+  });
+
+  test('should use test name for unexpected crashes if signature missing', async () => {
+    const rawSummary =
+      'TEST-UNEXPECTED-CRASH | /referrer-policy/gen/top.meta/never/sharedworker-module.http.html | expected OK';
+    const expected =
+      'Intermittent TEST-UNEXPECTED-CRASH | /referrer-policy/gen/top.meta/never/sharedworker-module.http.html | expected OK';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toBeInTheDocument(expected);
+  });
+
+  test('should extract crash signature', async () => {
+    const suggestions = [
+      {
+        bugs: {},
+        search_terms: [],
+        search:
+          'PROCESS-CRASH | application crashed [@ servo_arc::HeaderSlice<H,T>::slice] | dom/tests/mochitest/pointerlock/test_pointerlock-api.html',
+      },
+    ];
+
+    render(bugFilerComponentSuggestions(suggestions));
+    const signatureArea = screen.getByDisplayValue(
+      '[@ servo_arc::HeaderSlice<H,T>::slice]',
+    );
+    expect(signatureArea).toBeInTheDocument();
+  });
+
+  test('crash signature field should be empty for non-crash issues', async () => {
+    const suggestions = [
+      {
+        bugs: {},
+        search_terms: [],
+        search:
+          'TEST-UNEXPECTED-FAIL | dom/tests/mochitest/webvr/test_webvr.html | this passed',
+      },
+    ];
+
+    render(bugFilerComponentSuggestions(suggestions));
+    const signatureArea = screen.queryByDisplayValue('test_webvr.html');
+    expect(signatureArea).toBeNull();
+  });
+
+  test('should set as security bug if summary contains initially a relevant search term', async () => {
+    const suggestions = [
+      {
+        bugs: {},
+        search_terms: [],
+        search:
+          'SUMMARY: AddressSanitizer: heap-use-after-free /builds/worker/checkouts/gecko/mock/folder/file.c:12:34 in mock::MockComponent::MockMethod(mock::squirrel::Weasel*)',
+      },
+    ];
+    render(bugFilerComponentSuggestions(suggestions));
+    const securityIssue = screen.getByText('Report this as a security issue');
+    expect(securityIssue).toBeTruthy();
+  });
+
+  test('should not set as security bug if summary contains initially no relevant search term', async () => {
+    const suggestions = [
+      {
+        bugs: {},
+        search_terms: [],
+        search:
+          'TEST-UNEXPECTED-FAIL | mock/folder/test/subfolder/browser_test.js | Test timed out -',
+      },
+    ];
+
+    render(bugFilerComponentSuggestions(suggestions));
+    const securityIssue = screen.getByText('Report this as a security issue');
+    expect(securityIssue.checked).toBeFalsy();
+  });
+
+  test('should parse finding the filename when the `TEST-FOO` is not omitted', async () => {
+    const rawSummary =
+      'TEST-UNEXPECTED-CRASH | /service-workers/service-worker/xhr.https.html | expected OK';
+    const expected =
+      'TEST-UNEXPECTED-CRASH | /service-workers/service-worker/xhr.https.html | expected OK';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toBeInTheDocument(expected);
+  });
+
+  test('should strip omitted leads from thisFailure', async () => {
+    render(bugFilerComponentSuggestions(PdfSuggestions));
+
+    // Wait for async state updates to complete
+    await waitFor(() => {
+      expect(screen.getByText('Intermittent Bug Filer')).toBeInTheDocument();
+    });
+
+    const toggleSummary = screen.getByTitle('expand');
+    await fireEvent.click(toggleSummary);
+
+    // TODO: hardcoded '2' value - how to get textarea for expanded field
+    const area = screen.getAllByRole('textbox');
+    expect(area[2]).toHaveValue(
       'browser/extensions/pdfjs/test/browser_pdfjs_views.js | Test timed out -\n' +
         'browser/extensions/pdfjs/test/browser_pdfjs_views.js | Found a tab after previous test timed out: about:blank -\n' +
         'TEST-UNEXPECTED-PASS | flee | floo',
     );
+  });
+
+  test('should have summary as "single tracking bug"', async () => {
+    const rawSummary =
+      'PROCESS-CRASH | application crashed [@ libc.so.6 + 0x0000000000114cf9] | /storage/estimate-usage-details-indexeddb.https.tentative.any.html';
+    const expected =
+      'application crashed [@ libc.so.6 + 0x0000000000114cf9] | single tracking bug';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toBeInTheDocument(expected);
+  });
+
+  test('should NOT have summary as "single tracking bug"', async () => {
+    const rawSummary =
+      'TEST-UNEXPECTED-FAIL | browser/components/extensions/test/browser/browser_ext_contextMenus_targetUrlPatterns.js | Test timed out';
+    const expected =
+      'TEST-UNEXPECTED-FAIL | browser/components/extensions/test/browser/browser_ext_contextMenus_targetUrlPatterns.js | Test timed out';
+    const displayed = await SummaryAndExpected(rawSummary);
+    expect(displayed).toBeInTheDocument(expected);
   });
 });

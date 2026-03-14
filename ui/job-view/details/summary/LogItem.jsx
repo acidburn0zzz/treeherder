@@ -1,17 +1,11 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
-import {
-  Button,
-  UncontrolledDropdown,
-  DropdownItem,
-  DropdownMenu,
-  DropdownToggle,
-} from 'reactstrap';
+import { Button, Dropdown } from 'react-bootstrap';
 
 function getLogUrlProps(logKey, logUrl, logViewerUrl, logViewerFullUrl) {
   if (logKey === 'rawlog') {
     return {
-      title: 'Open the raw log in a new window',
+      title: 'Open the raw log in a new window (shift+l)',
       target: '_blank',
       rel: 'noopener noreferrer',
       href: logUrl.url,
@@ -21,11 +15,12 @@ function getLogUrlProps(logKey, logUrl, logViewerUrl, logViewerFullUrl) {
   switch (logUrl.parse_status) {
     case 'parsed':
       return {
-        target: '_blank',
-        rel: 'noopener',
+        target: `log-${logKey}-${logUrl.id}-${Math.round(
+          Math.random() * 10 ** 9,
+        )}`,
         href: logViewerUrl,
         'copy-value': logViewerFullUrl,
-        title: 'Open the log viewer in a new window',
+        title: 'Open the log viewer in a new window (l)',
       };
     case 'failed':
       return {
@@ -48,8 +43,8 @@ function getLogUrlProps(logKey, logUrl, logViewerUrl, logViewerFullUrl) {
 export default function LogItem(props) {
   const {
     logUrls,
-    logViewerUrl,
-    logViewerFullUrl,
+    logViewerUrl = null,
+    logViewerFullUrl = null,
     logKey,
     logDescription,
   } = props;
@@ -58,17 +53,17 @@ export default function LogItem(props) {
     <li key={logKey}>
       {/* Case 1: Two or more logurls - Display a dropdown */}
       {logUrls.length > 1 && (
-        <UncontrolledDropdown>
-          <DropdownToggle
+        <Dropdown>
+          <Dropdown.Toggle
             title={`Select a ${logDescription}`}
             className="logviewer-btn btn-view-nav"
           >
             {props.children}
-          </DropdownToggle>
-          <DropdownMenu>
+          </Dropdown.Toggle>
+          <Dropdown.Menu>
             {logUrls.map((logUrl) => (
-              <DropdownItem
-                tag="a"
+              <Dropdown.Item
+                as="a"
                 {...getLogUrlProps(
                   logKey,
                   logUrl,
@@ -78,16 +73,17 @@ export default function LogItem(props) {
                 key={`${logKey}-${logUrl.id}`}
               >
                 {logUrl.name} ({logUrl.id})
-              </DropdownItem>
+              </Dropdown.Item>
             ))}
-          </DropdownMenu>
-        </UncontrolledDropdown>
+          </Dropdown.Menu>
+        </Dropdown>
       )}
 
       {/* Case 2: Only one logurl - Display a button */}
       {logUrls.length === 1 && (
         <a
           className="logviewer-btn"
+          data-testid="logviewer-btn"
           {...getLogUrlProps(
             logKey,
             logUrls[0],
@@ -114,12 +110,7 @@ export default function LogItem(props) {
 }
 
 LogItem.propTypes = {
-  logUrls: PropTypes.arrayOf(PropTypes.object).isRequired,
+  logUrls: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   logViewerUrl: PropTypes.string,
   logViewerFullUrl: PropTypes.string,
-};
-
-LogItem.defaultProps = {
-  logViewerUrl: null,
-  logViewerFullUrl: null,
 };

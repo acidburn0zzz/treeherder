@@ -9,6 +9,8 @@ ERROR_TEST_CASES = (
     "c:/Users/task_1584487163/dist/Release/lib\\softokn3.dll.lib : fatal error LNK1120: 2 unresolved externals",
     # "FATAL ERROR"
     "20:10:13     INFO - PID 15468 | FATAL ERROR: AsyncShutdown timeout in xpcom-will-shutdown",
+    # "Hit MOZ_CRASH"
+    "15:28:28     INFO - GECKO(3166) | Hit MOZ_CRASH(Shutdown hanging after all known phases and workers finished.) at /builds/worker/checkouts/gecko/toolkit/components/terminator/nsTerminator.cpp:246",
     # "PROCESS-CRASH"
     "00:54:55 WARNING - PROCESS-CRASH | Shutdown | application crashed [@ PR_GetThreadPrivate]",
     # "Assertion fail"
@@ -31,6 +33,8 @@ ERROR_TEST_CASES = (
     "00:55:13 INFO - SUMMARY: AddressSanitizer: 64 byte(s) leaked in 1 allocation(s).",
     # "SUMMARY: ThreadSanitizer"
     "INFO - GECKO(2552) | SUMMARY: ThreadSanitizer: data race /builds/worker/checkouts/gecko/js/src/gc/Cell.h:572:21 in lengthField",
+    # "SUMMARY: UndefinedBehaviorSanitizer"
+    "04:48:03     INFO -  [webrender 0.61.0] SUMMARY: UndefinedBehaviorSanitizer: undefined-behavior glsl-optimizer/src/compiler/glsl/glcpp/pp.c:198:28 in",
     # "ThreadSanitizer: nested bug"
     "19:34:37     INFO - GECKO(2516) | ThreadSanitizer: nested bug in the same thread, aborting.",
     # "Automation Error:"
@@ -71,11 +75,17 @@ ERROR_TEST_CASES = (
     "2020-03-18 20:40:52 UTC 39:27.50 /builds/worker/checkouts/gecko/widget/gtk/nsWindow.cpp:3536:30: error: too few arguments to function 'const gchar* gtk_check_version(guint, guint, guint)'",
     # " error R?C\d*:"
     "src/gl.cc(2249): error C2065: 'BLEND_1': undeclared identifier",
+    # "YOU ARE LEAKING THE WORLD"
+    "20:28:29     INFO - WARNING: YOU ARE LEAKING THE WORLD (at least one JSRuntime and everything alive inside it, that is) AT JS_ShutDown TIME.  FIX THIS!",
 )
 
 NON_ERROR_TEST_CASES = (
     # General message for a passing test step
     "TEST-PASS | foo | bar",
+    # "TEST-UNEXPECTED-WARNING" doesn't set the task as failed and can also be
+    # observed for successful tasks. These messages are used by linters to
+    # identify new issues.
+    "TEST-UNEXPECTED-WARNING | /builds/worker/checkouts/gecko/browser/components/migration/IEProfileMigrator.sys.mjs:377:12 | OS.File is deprecated. You should use IOUtils instead. (mozilla/reject-osfile)",
     # Doesn't match "^[A-Za-z\.]*Exception: "
     "07:42:02     INFO -  Exception:",
     # Doesn't match "^[A-Za-z.]+Error: "
@@ -90,6 +100,10 @@ NON_ERROR_TEST_CASES = (
     "01:22:41     INFO -  ImportError: No module named pygtk",
     # "^ImportError: No module named pygtk$"
     "01:22:41     INFO -  ImportError: No module named pygtk\r\n",
+    # "^non-fatal error"
+    "2023-02-28 22:06:01+0000: non-fatal error removing directory: icons/, rv: 0, err: 39",
+    # "Assertion failure$"
+    "PROCESS(1234) | Assertion failure",
 )
 
 
@@ -108,7 +122,7 @@ def test_error_lines_matched(line):
 def test_error_lines_taskcluster(line):
     parser = ErrorParser()
     # Make the log parser think this is a TaskCluster log.
-    parser.parse_line('[taskcluster foo] this is a taskcluster log', 1)
+    parser.parse_line("[taskcluster foo] this is a taskcluster log", 1)
     assert parser.is_taskcluster
     parser.parse_line(line, 2)
     assert len(parser.artifact) == 1
@@ -143,4 +157,4 @@ def test_taskcluster_strip_prefix():
     # TC prefix is stripped.
     parser.parse_line("[vcs 2016-09-07T19:03:02.188327Z] 23:57:52 ERROR - Return code: 1", 3)
     assert len(parser.artifact) == 1
-    assert parser.artifact[0]['linenumber'] == 3
+    assert parser.artifact[0]["linenumber"] == 3

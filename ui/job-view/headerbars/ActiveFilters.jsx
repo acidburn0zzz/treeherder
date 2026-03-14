@@ -1,238 +1,248 @@
-import React from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import PropTypes from 'prop-types';
-import { Button } from 'reactstrap';
+import { Button, Form } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faTimesCircle } from '@fortawesome/free-solid-svg-icons';
+import { connect } from 'react-redux';
+import { useLocation } from 'react-router-dom';
 
+import { updateRange } from '../redux/stores/pushes';
+import { clearSelectedJob } from '../stores/selectedJobStore';
 import { getFieldChoices } from '../../helpers/filter';
 
-export default class ActiveFilters extends React.Component {
-  constructor(props) {
-    super(props);
+function ActiveFilters({
+  filterModel,
+  filterBarFilters,
+  isFieldFilterVisible,
+  toggleFieldFilterVisible,
+  classificationTypes,
+  updateRange,
+}) {
+  const location = useLocation();
+  const [newFilterField, setNewFilterFieldState] = useState('');
+  const [newFilterMatchType, setNewFilterMatchType] = useState('');
+  const [newFilterValue, setNewFilterValue] = useState('');
+  const [newFilterChoices, setNewFilterChoices] = useState([]);
 
-    this.state = {
-      newFilterField: '',
-      newFilterMatchType: '',
-      newFilterValue: '',
-      newFilterChoices: [],
-    };
-  }
+  const fieldChoices = useMemo(() => {
+    const choices = getFieldChoices();
+    choices.failure_classification_id.choices = classificationTypes;
+    return choices;
+  }, [classificationTypes]);
 
-  static getDerivedStateFromProps(props) {
-    const { classificationTypes } = props;
-    const fieldChoices = getFieldChoices();
+  const setNewFilterField = useCallback(
+    (field) => {
+      setNewFilterFieldState(field);
+      setNewFilterMatchType(fieldChoices[field].matchType);
+      setNewFilterChoices(fieldChoices[field].choices);
+    },
+    [fieldChoices],
+  );
 
-    fieldChoices.failure_classification_id.choices = classificationTypes;
-    return { fieldChoices };
-  }
+  const getFilterValue = useCallback(
+    (field, value) => {
+      const choice = fieldChoices[field];
+      const choiceValue = choice.choices.find((c) => String(c.id) === value);
 
-  setNewFilterField = (field) => {
-    const { fieldChoices } = this.state;
-    this.setState({
-      newFilterField: field,
-      newFilterMatchType: fieldChoices[field].matchType,
-      newFilterChoices: fieldChoices[field].choices,
-    });
-  };
+      return choice.matchType === 'choice' && choiceValue
+        ? choiceValue.name
+        : value;
+    },
+    [fieldChoices],
+  );
 
-  setNewFilterValue = (value) => {
-    this.setState({ newFilterValue: value });
-  };
+  const clearNewFieldFilter = useCallback(() => {
+    setNewFilterFieldState('');
+    setNewFilterMatchType('');
+    setNewFilterValue('');
+    setNewFilterChoices([]);
+    toggleFieldFilterVisible();
+  }, [toggleFieldFilterVisible]);
 
-  getFilterValue(field, value) {
-    const { fieldChoices } = this.state;
-    const choice = fieldChoices[field];
-    const choiceValue = choice.choices.find((c) => String(c.id) === value);
-
-    return choice.matchType === 'choice' && choiceValue
-      ? choiceValue.name
-      : value;
-  }
-
-  addNewFieldFilter = () => {
-    const { filterModel } = this.props;
-    const { newFilterField, newFilterValue } = this.state;
-
+  const addNewFieldFilter = useCallback(() => {
     if (newFilterField && newFilterValue) {
       filterModel.addFilter(newFilterField, newFilterValue);
-      this.clearNewFieldFilter();
+      clearNewFieldFilter();
     }
-  };
+  }, [newFilterField, newFilterValue, filterModel, clearNewFieldFilter]);
 
-  // Clear the values and close the input form group
-  clearNewFieldFilter = () => {
-    this.setState({
-      newFilterField: '',
-      newFilterMatchType: '',
-      newFilterValue: '',
-      newFilterChoices: [],
-    });
-    this.props.toggleFieldFilterVisible();
-  };
+  const clearAndUpdateRange = useCallback(
+    (specificFilter = null) => {
+      const params = new URLSearchParams(location.search);
 
-  render() {
-    const { isFieldFilterVisible, filterModel, filterBarFilters } = this.props;
-    const {
-      newFilterField,
-      newFilterMatchType,
-      newFilterValue,
-      newFilterChoices,
-      fieldChoices,
-    } = this.state;
+      if (!specificFilter) {
+        filterModel.clearNonStatusFilters();
+      } else {
+        const { filterField, filterValue } = specificFilter;
+        filterModel.removeFilter(filterField, filterValue);
+      }
 
-    return (
-      <div className="alert-info active-filters-bar">
-        {!!filterBarFilters.length && (
-          <div>
-            <Button
-              color="darker-info"
-              outline
-              className="pointable bg-transparent border-0 pt-0 pr-1 pb-1"
-              title="Clear all of these filters"
-              onClick={filterModel.clearNonStatusFilters}
-            >
-              <FontAwesomeIcon
-                icon={faTimesCircle}
-                title="Clear all these filters"
-              />{' '}
-            </Button>
-            <span className="active-filters-title">
-              <b>Active Filters</b>
-            </span>
-            {filterBarFilters.map((filter) =>
-              filter.value.map((filterValue) => (
-                <span
-                  className="filtersbar-filter"
-                  key={`${filter.field}${filterValue}`}
+      // we do this because anytime the 'revision' or 'author' param is changed,
+      // updateRange will be triggered in PushList's componentDidUpdate lifecycle.
+      // This also helps in the scenario where we are only changing the global window location query params
+      // (to also prevent an unnecessary componentDidUpdate change) such as when a user clicks to view
+      // a revision, then selects "next x pushes" to set a range.
+      if (!params.has('revision') && !params.has('author')) {
+        updateRange(filterModel.getUrlParamsWithoutDefaults());
+      } else if (params.has('selectedTaskRun')) {
+        clearSelectedJob(0);
+      }
+    },
+    [location.search, filterModel, updateRange],
+  );
+
+  return (
+    <div className="alert-info active-filters-bar">
+      {!!filterBarFilters.length && (
+        <div>
+          <Button
+            variant="outline-darker-info"
+            className="pointable bg-transparent border-0 pt-0 pe-1 pb-1"
+            title="Clear all of these filters"
+            onClick={() => clearAndUpdateRange()}
+          >
+            <FontAwesomeIcon
+              icon={faTimesCircle}
+              title="Clear all these filters"
+            />{' '}
+          </Button>
+          <span className="active-filters-title">
+            <b>Active Filters</b>
+          </span>
+          {filterBarFilters.map((filter) =>
+            filter.value.map((filterValue) => (
+              <span
+                className="filtersbar-filter"
+                key={`${filter.field}${filterValue}`}
+              >
+                <Button
+                  variant="outline-darker-info"
+                  className="pointable bg-transparent border-0 py-0 pe-1"
+                  title={`Clear filter: ${filter.field}`}
+                  onClick={() =>
+                    clearAndUpdateRange({
+                      filterField: filter.field,
+                      filterValue,
+                    })
+                  }
                 >
-                  <Button
-                    color="darker-info"
-                    outline
-                    className="pointable bg-transparent border-0 py-0 pr-1"
-                    title={`Clear filter: ${filter.field}`}
-                    onClick={() =>
-                      filterModel.removeFilter(filter.field, filterValue)
-                    }
-                  >
-                    <FontAwesomeIcon
-                      icon={faTimesCircle}
-                      title={`Clear filter: ${filter.field}`}
-                    />
-                    &nbsp;
-                  </Button>
-                  <span title={`Filter by ${filter.field}: ${filterValue}`}>
-                    <b>{filter.field}:</b>
-                    {filter.field === 'failure_classification_id' && (
-                      <span>
-                        {' '}
-                        {this.getFilterValue(filter.field, filterValue)}
-                      </span>
-                    )}
-                    {(filter.field === 'revision' ||
-                      filter.field === 'tochange' ||
-                      filter.field === 'fromchange') && (
-                      <span> {filterValue.substr(0, 12)}</span>
-                    )}
-                    {![
-                      'failure_classification_id',
-                      'fromchange',
-                      'revision',
-                      'tochange',
-                    ].includes(filter.field) && <span> {filterValue}</span>}
-                  </span>
-                </span>
-              )),
-            )}
-          </div>
-        )}
-        {isFieldFilterVisible && (
-          <div>
-            <form className="form-inline">
-              <div className="form-group input-group-sm new-filter-input">
-                <select
-                  id="job-filter-field"
-                  className="form-control"
-                  value={newFilterField}
-                  onChange={(evt) => this.setNewFilterField(evt.target.value)}
-                  placeholder="filter field"
-                  aria-label="Field"
-                  required
-                >
-                  <option value="" disabled>
-                    select filter field
-                  </option>
-                  {Object.entries(fieldChoices).map(([field, obj]) =>
-                    obj.name !== 'tier' ? (
-                      <option value={field} key={field}>
-                        {obj.name}
-                      </option>
-                    ) : null,
+                  <FontAwesomeIcon icon={faTimesCircle} />
+                  &nbsp;
+                </Button>
+                <span title={`Filter by ${filter.field}: ${filterValue}`}>
+                  <b>{filter.field}:</b>
+                  {filter.field === 'failure_classification_id' && (
+                    <span> {getFilterValue(filter.field, filterValue)}</span>
                   )}
-                </select>
-                {newFilterMatchType !== 'choice' && (
-                  <React.Fragment>
-                    <input
-                      className="form-control"
-                      value={newFilterValue}
-                      onChange={(evt) =>
-                        this.setNewFilterValue(evt.target.value)
-                      }
-                      id="job-filter-value"
-                      type="text"
-                      required
-                      placeholder="enter filter value"
-                      aria-label="Value"
-                    />
-                  </React.Fragment>
-                )}
-                {newFilterMatchType === 'choice' && (
-                  <select
-                    className="form-control"
-                    value={newFilterValue}
-                    onChange={(evt) => this.setNewFilterValue(evt.target.value)}
-                    id="job-filter-choice-value"
-                    aria-label="Value"
-                  >
-                    <option value="" disabled>
-                      select value
-                    </option>
-                    {Object.entries(newFilterChoices).map(([fci, fciObj]) => (
-                      <option value={fciObj.id} key={fci}>
-                        {fciObj.name}
-                      </option>
-                    ))}
-                  </select>
-                )}
-                <Button
-                  type="submit"
-                  size="sm"
-                  className="bg-light"
-                  onClick={this.addNewFieldFilter}
-                  outline
-                >
-                  add
-                </Button>
-                <Button
-                  className="bg-light"
-                  outline
-                  size="sm"
-                  onClick={this.clearNewFieldFilter}
-                >
-                  cancel
-                </Button>
-              </div>
-            </form>
-          </div>
-        )}
-      </div>
-    );
-  }
+                  {(filter.field === 'revision' ||
+                    filter.field === 'tochange' ||
+                    filter.field === 'fromchange') && (
+                    <span> {filterValue.substr(0, 12)}</span>
+                  )}
+                  {![
+                    'failure_classification_id',
+                    'fromchange',
+                    'revision',
+                    'tochange',
+                  ].includes(filter.field) && <span> {filterValue}</span>}
+                </span>
+              </span>
+            )),
+          )}
+        </div>
+      )}
+      {isFieldFilterVisible && (
+        <div>
+          {/* Use Bootstrap 5 flexbox utilities instead of form-inline */}
+          <Form className="d-flex flex-row align-items-center gap-2">
+            <Form.Select
+              size="sm"
+              id="job-filter-field"
+              value={newFilterField}
+              onChange={(evt) => setNewFilterField(evt.target.value)}
+              className="flex-shrink-0"
+              style={{ width: 'auto' }}
+              aria-label="Field"
+              required
+            >
+              <option value="" disabled>
+                select filter field
+              </option>
+              {Object.entries(fieldChoices).map(([field, obj]) =>
+                obj.name !== 'tier' ? (
+                  <option value={field} key={field}>
+                    {obj.name}
+                  </option>
+                ) : null,
+              )}
+            </Form.Select>
+            {newFilterMatchType !== 'choice' && (
+              <Form.Control
+                size="sm"
+                value={newFilterValue}
+                onChange={(evt) => setNewFilterValue(evt.target.value)}
+                id="job-filter-value"
+                type="text"
+                placeholder="enter filter value"
+                className="flex-grow-1"
+                style={{ minWidth: '150px' }}
+                aria-label="Value"
+                required
+              />
+            )}
+            {newFilterMatchType === 'choice' && (
+              <Form.Select
+                size="sm"
+                value={newFilterValue}
+                onChange={(evt) => setNewFilterValue(evt.target.value)}
+                id="job-filter-choice-value"
+                className="flex-grow-1"
+                style={{ minWidth: '150px' }}
+                aria-label="Value"
+              >
+                <option value="" disabled>
+                  select value
+                </option>
+                {Object.entries(newFilterChoices).map(([fci, fciObj]) => (
+                  <option value={fciObj.id} key={fci}>
+                    {fciObj.name}
+                  </option>
+                ))}
+              </Form.Select>
+            )}
+            <Button
+              type="submit"
+              size="sm"
+              className="bg-light"
+              onClick={addNewFieldFilter}
+              variant="outline-secondary"
+            >
+              add
+            </Button>
+            <Button
+              className="bg-light"
+              variant="outline-secondary"
+              size="sm"
+              onClick={clearNewFieldFilter}
+            >
+              cancel
+            </Button>
+          </Form>
+        </div>
+      )}
+    </div>
+  );
 }
 
 ActiveFilters.propTypes = {
   filterModel: PropTypes.shape({}).isRequired,
-  filterBarFilters: PropTypes.arrayOf(PropTypes.object).isRequired,
+  filterBarFilters: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   isFieldFilterVisible: PropTypes.bool.isRequired,
   toggleFieldFilterVisible: PropTypes.func.isRequired,
-  classificationTypes: PropTypes.arrayOf(PropTypes.object).isRequired,
+  classificationTypes: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
+  updateRange: PropTypes.func.isRequired,
 };
+
+export default connect(null, {
+  updateRange,
+})(ActiveFilters);

@@ -1,41 +1,59 @@
 # Packages that are shared between deployment and dev environments.
-gunicorn==20.0.4
-whitenoise[brotli]  # Used by Whitenoise to provide Brotli-compressed versions of static files.
-Django==3.0.8
-celery==4.4.2   # 4.4.2 required to pass test_retryable_task_throws_retry, celery needed for data ingestion
-simplejson  # import simplejson
-newrelic==5.18.0.148
+gunicorn==25.0.3
+whitenoise[brotli]==6.11.0  # Used by Whitenoise to provide Brotli-compressed versions of static files.
+Django==5.1.15
+celery==5.6.2  # celery needed for data ingestion
+cached-property==2.0.1 # needed for kombu with --require-hashes
+simplejson==3.20.2  # import simplejson
+newrelic==11.2.0
+certifi==2026.1.4
 
-mysqlclient   # Required by Django
+psycopg2-binary==2.9.11
 
-jsonschema  # import jsonschema
-djangorestframework  # Imported as rest_framework
-django-cors-headers  # Listed as 3rd party app on settings.py
-mozlog
-
-coreapi  # `coreapi` must be installed for schema support.
+jsonschema==4.26.0  # import jsonschema
+djangorestframework==3.16.1  # Imported as rest_framework
+django-cors-headers==4.9.0  # Listed as 3rd party app on settings.py
+drf-spectacular==0.29.0  # Used for REST API Schema Generation
+mozlog==8.0.0
 
 # Used directly and also by Django's YAML serializer.
-PyYAML  # Imported as yaml
-django-environ  # Imported as environ
+PyYAML==6.0.3  # Imported as yaml
+django-environ==0.11.2  # Imported as environ
+uritemplate==4.2.0  # For OpenAPI schema
 
-python-dateutil
-django-filter  # Listed in DEFAULT_FILTER_BACKENDS on settings.py
-django-redis  # Listed in CACHES on settings.py
+python-dateutil==2.9.0.post0
+django-filter==25.1  # Listed in DEFAULT_FILTER_BACKENDS on settings.py
+django-redis==6.0.0  # Listed in CACHES on settings.py
 
-taskcluster  # import taskcluster
-typing  # from typing import ...
-python-jose[pycryptodome]  # from jose import jwt
+taskcluster==88.0.5  # import taskcluster
+python-jose[pycryptodome]==3.5.0  # from jose import jwt
 
-furl  # Imported as furl
-first  # Imported as first
-json-e  # import jsone
-django-cache-memoize   # Imported as cache_memoize
-
-# Required for extraction to BigQuery
-jx-bigquery
-jx-mysql
-mo-testing
+furl==2.1.4  # Imported as furl
+first==2.0.2  # Imported as first
+json-e==4.8.1  # import jsone
+django-cache-memoize==0.2.1  # Imported as cache_memoize
 
 # Required for Push Health
-mozci
+mozci[cache]==2.4.3
+
+# Dockerflow/CloudOps APIs
+dockerflow==2024.4.2
+
+# Measuring noise of perf data
+moz-measure-noise==2.70.0
+
+# Used in the intermittents commenter
+jinja2==3.1.6
+
+# Client to publish runtime statistics to statsd
+statsd==4.0.1
+
+#installed for OpenAPI schema support
+inflection==0.5.1
+
+# Change detection tooling
+mozdetect==0.1.0
+
+# Statistical methods for performance analysis
+cliffs-delta==1.0.0
+KDEpy==1.1.12

@@ -8,7 +8,7 @@ def _lookup_extra_options_max(schema):
     return schema["definitions"]["suite_schema"]["properties"]["extraOptions"]["items"]["maxLength"]
 
 
-with open(os.path.join('schemas', 'performance-artifact.json')) as f:
+with open(os.path.join("schemas", "performance-artifact.json")) as f:
     PERFHERDER_SCHEMA = json.load(f)
     MAX_LENGTH = _lookup_extra_options_max(PERFHERDER_SCHEMA)
     SECOND_MAX_LENGTH = 45
@@ -21,7 +21,7 @@ def validate_perf_data(performance_data: dict):
     for suite in performance_data["suites"]:
         # allow only one extraOption longer than 45
         if len(_long_options(_extra_options(suite), *expected_range)) > 1:
-            raise ValidationError("Too many extra options longer than {}".format(SECOND_MAX_LENGTH))
+            raise ValidationError(f"Too many extra options longer than {SECOND_MAX_LENGTH}")
 
 
 def _long_options(all_extra_options: list, second_max: int, first_max: int):

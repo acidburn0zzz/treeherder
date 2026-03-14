@@ -4,19 +4,16 @@ import {
 } from '../../../ui/models/filter';
 
 describe('FilterModel', () => {
-  const oldHash = window.location.hash;
-
-  afterEach(() => {
-    window.location.hash = oldHash;
-  });
+  // Mock location object for testing
+  const createLocation = (search) => ({ search, pathname: '/jobs' });
 
   describe('parsing an old url', () => {
     it('should parse the repo with defaults', () => {
-      window.location.hash = '?repo=mozilla-inbound';
-      const urlParams = getFilterUrlParamsWithDefaults();
+      const location = createLocation('?repo=autoland');
+      const urlParams = getFilterUrlParamsWithDefaults(location);
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',
@@ -34,15 +31,16 @@ describe('FilterModel', () => {
     });
 
     it('should parse resultStatus params', () => {
-      window.location.hash =
-        '?repo=mozilla-inbound&filter-resultStatus=testfailed&' +
-        'filter-resultStatus=busted&filter-resultStatus=exception&' +
-        'filter-resultStatus=success&filter-resultStatus=retry' +
-        '&filter-resultStatus=runnable';
-      const urlParams = getFilterUrlParamsWithDefaults();
+      const location = createLocation(
+        '?repo=autoland&filter-resultStatus=testfailed&' +
+          'filter-resultStatus=busted&filter-resultStatus=exception&' +
+          'filter-resultStatus=success&filter-resultStatus=retry' +
+          '&filter-resultStatus=runnable',
+      );
+      const urlParams = getFilterUrlParamsWithDefaults(location);
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',
@@ -57,15 +55,16 @@ describe('FilterModel', () => {
     });
 
     it('should parse searchStr params with tier and groupState intact', () => {
-      window.location.hash =
-        '?repo=mozilla-inbound&filter-searchStr=Linux%20x64%20debug%20build-linux64-base-toolchains%2Fdebug%20(Bb)&filter-tier=1&group_state=expanded';
+      const location = createLocation(
+        '?repo=autoland&filter-searchStr=Linux%20x64%20debug%20build-linux64-base-toolchains%2Fdebug%20(Bb)&filter-tier=1&group_state=expanded',
+      );
       const urlParams = {
-        ...getNonFilterUrlParams(),
-        ...getFilterUrlParamsWithDefaults(),
+        ...getNonFilterUrlParams(location),
+        ...getFilterUrlParamsWithDefaults(location),
       };
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',
@@ -91,11 +90,13 @@ describe('FilterModel', () => {
     });
 
     it('should parse job field filters', () => {
-      window.location.hash = '?repo=mozilla-inbound&filter-job_type_name=mochi';
-      const urlParams = getFilterUrlParamsWithDefaults();
+      const location = createLocation(
+        '?repo=autoland&filter-job_type_name=mochi',
+      );
+      const urlParams = getFilterUrlParamsWithDefaults(location);
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',
@@ -116,13 +117,14 @@ describe('FilterModel', () => {
 
   describe('parsing a new url', () => {
     it('should parse resultStatus and searchStr', () => {
-      window.location.hash =
-        '?repo=mozilla-inbound&resultStatus=testfailed,busted,exception,success,retry,runnable&' +
-        'searchStr=linux,x64,debug,build-linux64-base-toolchains%2Fdebug,(bb)';
-      const urlParams = getFilterUrlParamsWithDefaults();
+      const location = createLocation(
+        '?repo=autoland&resultStatus=testfailed,busted,exception,success,retry,runnable&' +
+          'searchStr=linux,x64,debug,build-linux64-base-toolchains%2Fdebug,(bb)',
+      );
+      const urlParams = getFilterUrlParamsWithDefaults(location);
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',
@@ -144,12 +146,13 @@ describe('FilterModel', () => {
     });
 
     it('should preserve the case in email addresses', () => {
-      window.location.hash =
-        '?repo=mozilla-inbound&author=VYV03354@nifty.ne.jp';
-      const urlParams = getFilterUrlParamsWithDefaults();
+      const location = createLocation(
+        '?repo=autoland&author=VYV03354@nifty.ne.jp',
+      );
+      const urlParams = getFilterUrlParamsWithDefaults(location);
 
       expect(urlParams).toEqual({
-        repo: ['mozilla-inbound'],
+        repo: ['autoland'],
         resultStatus: [
           'testfailed',
           'busted',

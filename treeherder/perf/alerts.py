@@ -1,32 +1,60 @@
 import logging
 import time
 from collections import namedtuple
-from datetime import datetime, timedelta
-from itertools import zip_longest
-from typing import List, Tuple
+from datetime import datetime
 
-import simplejson as json
+import moz_measure_noise
+import newrelic.agent
+import numpy as np
 from django.conf import settings
 from django.db import transaction
-from django.db.models import F, Q
-from django.db.models.query import QuerySet
+from django.db.models import Exists, OuterRef, Subquery
 
-from treeherder.perf.exceptions import MissingRecords
+from treeherder.perf.email import AlertNotificationWriter
+from treeherder.perf.methods.CramerVonMisesDetector import CramerVonMisesDetector
+from treeherder.perf.methods.KolmogorovSmirnovDetector import KolmogorovSmirnovDetector
+from treeherder.perf.methods.LeveneDetector import LeveneDetector
+from treeherder.perf.methods.MannWhitneyUDetector import MannWhitneyUDetector
+from treeherder.perf.methods.StudentDetector import StudentDetector
+from treeherder.perf.methods.WelchDetector import WelchDetector
 from treeherder.perf.models import (
-    BackfillRecord,
-    BackfillReport,
     PerformanceAlert,
     PerformanceAlertSummary,
+    PerformanceAlertSummaryTesting,
+    PerformanceAlertTesting,
     PerformanceDatum,
+    PerformanceDatumReplicate,
     PerformanceSignature,
+    PerformanceTelemetrySignature,
+    RevisionDatumTest,
 )
 from treeherder.perfalert.perfalert import RevisionDatum, detect_changes
-from treeherder.utils import default_serializer
+from treeherder.services import taskcluster
+
+logger = logging.getLogger(__name__)
+
+REPLICATES = False
+
+
+def send_alert_emails(emails, alert, alert_summary):
+    notify_client = taskcluster.notify_client_factory()
+
+    for email in emails:
+        logger.info(f"Sending alert email to {email}")
+        notification_writer = AlertNotificationWriter()
+        email = notification_writer.prepare_new_email(email, alert, alert_summary)
+        notify_client.email(email)
+
+
+def geomean(iterable):
+    # Returns a geomean of a list of values.
+    a = np.array(iterable)
+    return a.prod() ** (1.0 / len(a))
 
 
 def get_alert_properties(prev_value, new_value, lower_is_better):
     AlertProperties = namedtuple(
-        'AlertProperties', 'pct_change delta is_regression prev_value new_value'
+        "AlertProperties", "pct_change delta is_regression prev_value new_value"
     )
     if prev_value != 0:
         pct_change = 100.0 * abs(new_value - prev_value) / float(prev_value)
@@ -45,24 +73,48 @@ def generate_new_alerts_in_series(signature):
     # (1) the last alert, if there is one
     # (2) the alerts max age
     # (use whichever is newer)
-    max_alert_age = datetime.now() - settings.PERFHERDER_ALERTS_MAX_AGE
+    max_alert_age = alert_after_ts = datetime.now() - settings.PERFHERDER_ALERTS_MAX_AGE
     series = PerformanceDatum.objects.filter(signature=signature, push_timestamp__gte=max_alert_age)
     latest_alert_timestamp = (
         PerformanceAlert.objects.filter(series_signature=signature)
-        .select_related('summary__push__time')
-        .order_by('-summary__push__time')
-        .values_list('summary__push__time', flat=True)[:1]
+        .select_related("summary__push__time")
+        .order_by("-summary__push__time")
+        .values_list("summary__push__time", flat=True)[:1]
     )
     if latest_alert_timestamp:
-        series = series.filter(push_timestamp__gt=latest_alert_timestamp[0])
+        latest_ts = latest_alert_timestamp[0]
+        series = series.filter(push_timestamp__gt=latest_ts)
+        if latest_ts > alert_after_ts:
+            alert_after_ts = latest_ts
+
+    datum_with_replicates = (
+        PerformanceDatum.objects.filter(
+            signature=signature,
+            repository=signature.repository,
+            push_timestamp__gte=alert_after_ts,
+        )
+        .annotate(
+            has_replicate=Exists(
+                PerformanceDatumReplicate.objects.filter(performance_datum_id=OuterRef("pk"))
+            )
+        )
+        .filter(has_replicate=True)
+    )
+    replicates = PerformanceDatumReplicate.objects.filter(
+        performance_datum_id__in=Subquery(datum_with_replicates.values("id"))
+    ).values_list("performance_datum_id", "value")
+    replicates_map: dict[int, list[float]] = {}
+    for datum_id, value in replicates:
+        replicates_map.setdefault(datum_id, []).append(value)
 
     revision_data = {}
     for d in series:
         if not revision_data.get(d.push_id):
             revision_data[d.push_id] = RevisionDatum(
-                int(time.mktime(d.push_timestamp.timetuple())), d.push_id, []
+                int(time.mktime(d.push_timestamp.timetuple())), d.push_id, [], []
             )
         revision_data[d.push_id].values.append(d.value)
+        revision_data[d.push_id].replicates.extend(replicates_map.get(d.id, []))
 
     min_back_window = signature.min_back_window
     if min_back_window is None:
@@ -77,21 +129,45 @@ def generate_new_alerts_in_series(signature):
     if alert_threshold is None:
         alert_threshold = settings.PERFHERDER_REGRESSION_THRESHOLD
 
+    data = revision_data.values()
     analyzed_series = detect_changes(
-        revision_data.values(),
+        data,
         min_back_window=min_back_window,
         max_back_window=max_back_window,
         fore_window=fore_window,
     )
 
     with transaction.atomic():
-        for (prev, cur) in zip(analyzed_series, analyzed_series[1:]):
+        for prev, cur in zip(analyzed_series, analyzed_series[1:]):
             if cur.change_detected:
-                prev_value = cur.historical_stats['avg']
-                new_value = cur.forward_stats['avg']
+                prev_value = cur.historical_stats["avg"]
+                new_value = cur.forward_stats["avg"]
                 alert_properties = get_alert_properties(
                     prev_value, new_value, signature.lower_is_better
                 )
+
+                noise_profile = "N/A"
+                try:
+                    # Gather all data up to the current data point that
+                    # shows the regression and obtain a noise profile on it.
+                    # This helps us to ignore this alert and others in the
+                    # calculation that could influence the profile.
+                    noise_data = []
+                    for point in analyzed_series:
+                        if point == cur:
+                            break
+                        noise_data.append(geomean(point.values))
+
+                    noise_profile, _ = moz_measure_noise.deviance(noise_data)
+
+                    if not isinstance(noise_profile, str):
+                        raise Exception(
+                            f"Expecting a string as a noise profile, got: {type(noise_profile)}"
+                        )
+                except Exception:
+                    # Fail without breaking the alert computation
+                    newrelic.agent.notice_error()
+                    logger.error("Failed to obtain a noise profile.")
 
                 # ignore regressions below the configured regression
                 # threshold
@@ -103,7 +179,7 @@ def generate_new_alerts_in_series(signature):
                     and alert_properties.pct_change < alert_threshold
                 ) or (
                     signature.alert_change_type == PerformanceSignature.ALERT_ABS
-                    and alert_properties.delta < alert_threshold
+                    and abs(alert_properties.delta) < alert_threshold
                 ):
                     continue
 
@@ -112,355 +188,244 @@ def generate_new_alerts_in_series(signature):
                     framework=signature.framework,
                     push_id=cur.push_id,
                     prev_push_id=prev.push_id,
+                    sheriffed=not signature.monitor,
                     defaults={
-                        'manually_created': False,
-                        'created': datetime.utcfromtimestamp(cur.push_timestamp),
+                        "manually_created": False,
+                        "created": datetime.utcfromtimestamp(cur.push_timestamp),
                     },
                 )
 
                 # django/mysql doesn't understand "inf", so just use some
                 # arbitrarily high value for that case
                 t_value = cur.t
-                if t_value == float('inf'):
+                if t_value == float("inf"):
                     t_value = 1000
 
-                PerformanceAlert.objects.update_or_create(
+                alert, _ = PerformanceAlert.objects.update_or_create(
                     summary=summary,
                     series_signature=signature,
+                    sheriffed=not signature.monitor,
                     defaults={
-                        'is_regression': alert_properties.is_regression,
-                        'amount_pct': alert_properties.pct_change,
-                        'amount_abs': alert_properties.delta,
-                        'prev_value': prev_value,
-                        'new_value': new_value,
-                        't_value': t_value,
+                        "noise_profile": noise_profile,
+                        "is_regression": alert_properties.is_regression,
+                        "amount_pct": alert_properties.pct_change,
+                        "amount_abs": alert_properties.delta,
+                        "prev_value": prev_value,
+                        "new_value": new_value,
+                        "t_value": t_value,
                     },
                 )
 
-
-class AlertsPicker:
-    """
-    Class encapsulating the algorithm used for selecting the most relevant alerts from a tuple of alerts.
-    For this algorithm, regressions are considered the most important, followed by improvements.
-    """
-
-    def __init__(
-        self, max_alerts: int, max_improvements: int, platforms_of_interest: Tuple[str, ...]
-    ):
-        """
-        :param max_alerts: the maximum number of selected alerts
-        :param max_improvements: max when handling only improvements
-        :param platforms_of_interest: platforms in decreasing order of importance
-              For selected platforms use the following names:
-                Windows 10:  'windows10'
-                Windows 7: 'windows7'
-                Linux: 'linux'
-                OS X: 'osx'
-                Android: 'android'
-            Note:
-                too specific names can trigger a mismatch with database data; the effect will be the alert skipping
-                too less specific will alter the correct order of alerts
-        """
-        if max_alerts <= 0 or max_improvements <= 0:
-            raise ValueError('Use positive values.')
-        if len(platforms_of_interest) == 0:
-            raise ValueError('Provide at least one platform name.')
-
-        self.max_alerts = max_alerts
-        self.max_improvements = max_improvements
-        self.ordered_platforms_of_interest = platforms_of_interest
-
-    def extract_important_alerts(self, alerts: Tuple[PerformanceAlert, ...]):
-        if any(not isinstance(alert, PerformanceAlert) for alert in alerts):
-            raise ValueError('Provided parameter does not contain only PerformanceAlert objects.')
-        relevant_alerts = self._extract_by_relevant_platforms(alerts)
-        sorted_alerts = self._multi_criterion_sort(relevant_alerts)
-        return self._ensure_alerts_variety(sorted_alerts)
-
-    def _ensure_alerts_variety(self, sorted_alerts: List[PerformanceAlert]):
-        """
-        The alerts container must be sorted before being passed to this function.
-        The returned list must contain regressions and (if present) improvements.
-        """
-        regressions_only = all(alert.is_regression for alert in sorted_alerts)
-        improvements_only = all(not alert.is_regression for alert in sorted_alerts)
-
-        if regressions_only or improvements_only:
-            resulted_alerts_list = self._ensure_platform_variety(sorted_alerts)
-        else:  # mixed alert types
-            regressions = [alert for alert in sorted_alerts if alert.is_regression]
-            improvements = [alert for alert in sorted_alerts if not alert.is_regression]
-
-            if len(regressions) > 1:
-                regressions = self._ensure_platform_variety(regressions)
-                regressions[-1] = improvements[0]
-            regressions.append(improvements[0])
-            resulted_alerts_list = regressions
-
-        return resulted_alerts_list[
-            : self.max_improvements if improvements_only else self.max_alerts
-        ]
-
-    def _ensure_platform_variety(self, sorted_all_alerts: List[PerformanceAlert]):
-        """
-        Note: Ensure that the sorted_all_alerts container has only
-        platforms of interest (example: 'windows10', 'windows7', 'linux', 'osx', 'android').
-        Please filter sorted_all_alerts list with filter_alerts(alerts) before calling this function.
-        :param sorted_all_alerts: alerts sorted by platform name
-        """
-        platform_grouped_alerts = []
-        for platform in self.ordered_platforms_of_interest:
-            specific_platform_alerts = [
-                alert
-                for alert in sorted_all_alerts
-                if platform in alert.series_signature.platform.platform
-            ]
-            if len(specific_platform_alerts):
-                platform_grouped_alerts.append(specific_platform_alerts)
-
-        platform_picked = []
-        for alert_group in zip_longest(*platform_grouped_alerts):
-            platform_picked.extend(alert_group)
-        platform_picked = [alert for alert in platform_picked if alert is not None]
-        return platform_picked
-
-    def _os_relevance(self, alert_platform: str):
-        """
-        One of the sorting criteria.
-        :param alert_platform: the name of the current alert's platform
-        :return: int value of platform's relevance
-        """
-        for platform_of_interest in self.ordered_platforms_of_interest:
-            if alert_platform.startswith(platform_of_interest):
-                return len(
-                    self.ordered_platforms_of_interest
-                ) - self.ordered_platforms_of_interest.index(platform_of_interest)
-        raise ValueError('Unknown platform.')
-
-    def _has_relevant_platform(self, alert: PerformanceAlert):
-        """
-        Filter criteria based on platform name.
-        """
-        alert_platform_name = alert.series_signature.platform.platform
-        return any(
-            alert_platform_name.startswith(platform_of_interest)
-            for platform_of_interest in self.ordered_platforms_of_interest
-        )
-
-    def _extract_by_relevant_platforms(self, alerts):
-        return list(filter(self._has_relevant_platform, alerts))
-
-    def _multi_criterion_sort(self, relevant_alerts):
-        sorted_alerts = sorted(
-            relevant_alerts,
-            # sort criteria
-            key=lambda alert: (
-                alert.is_regression,
-                self._os_relevance(alert.series_signature.platform.platform),
-                alert.amount_pct,  # magnitude
-            ),
-            reverse=True,
-        )
-        return sorted_alerts
+                if signature.alert_notify_emails:
+                    send_alert_emails(signature.alert_notify_emails.split(), alert, summary)
 
 
-class IdentifyAlertRetriggerables:
-    def __init__(self, max_data_points: int, time_interval: timedelta, logger=None):
-        if max_data_points < 1:
-            raise ValueError('Cannot set range width less than 1')
-        if max_data_points % 2 == 0:
-            raise ValueError('Must provide odd range width')
-        if not isinstance(time_interval, timedelta):
-            raise TypeError('Must provide time interval as timedelta')
+def build_cpd_methods():
+    student = StudentDetector(
+        name="student",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=7,
+        mag_check=True,
+        above_threshold_is_anomaly=True,
+    )
+    cvm = CramerVonMisesDetector(
+        name="cvm",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=0.05,
+        mag_check=False,
+        above_threshold_is_anomaly=False,
+    )
+    ks = KolmogorovSmirnovDetector(
+        name="ks",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=0.05,
+        mag_check=False,
+        above_threshold_is_anomaly=False,
+    )
+    welch = WelchDetector(
+        name="welch",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=0.05,
+        mag_check=False,
+        above_threshold_is_anomaly=False,
+    )
+    levene = LeveneDetector(
+        name="levene",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=0.05,
+        mag_check=False,
+        above_threshold_is_anomaly=False,
+    )
+    mwu = MannWhitneyUDetector(
+        name="mwu",
+        min_back_window=12,
+        max_back_window=24,
+        fore_window=12,
+        alert_threshold=2.0,
+        confidence_threshold=0.05,
+        mag_check=False,
+        above_threshold_is_anomaly=False,
+    )
+    methods = {
+        "student": student,
+        "cvm": cvm,
+        "ks": ks,
+        "welch": welch,
+        "levene": levene,
+        "mwu": mwu,
+    }
+    return methods
 
-        self._range_width = max_data_points
-        self._time_interval = time_interval
-        self.log = logger or logging.getLogger(self.__class__.__name__)
 
-    def __call__(self, alert: PerformanceAlert) -> List[dict]:
-        """
-        Main method
-        """
-        annotated_data_points = self._fetch_suspect_data_points(
-            alert
-        )  # in time_interval around alert
-        flattened_data_points = self._one_data_point_per_push(annotated_data_points)
+def create_alerts(signature, method, analyzed_series):
+    telemetry_sig, _ = PerformanceTelemetrySignature.objects.get_or_create(
+        channel=PerformanceTelemetrySignature.NIGHTLY,
+        probe="test_probe",
+        probe_type=PerformanceTelemetrySignature.GLEAN,
+        platform=signature.platform,
+        application=signature.application,
+    )
+    for prev, cur in zip(analyzed_series, analyzed_series[1:]):
+        if cur.change_detected[method.name]:
+            prev_value = cur.historical_stats["avg"]
+            new_value = cur.forward_stats["avg"]
 
-        alert_index = self._find_push_id_index(alert.summary.push_id, flattened_data_points)
-
-        retrigger_window = self.__compute_window_slices(alert_index)
-        data_points_to_retrigger = flattened_data_points[retrigger_window]
-
-        self._glance_over_retrigger_range(data_points_to_retrigger)
-
-        return data_points_to_retrigger
-
-    def min_timestamp(self, alert_push_time: datetime) -> datetime:
-        return alert_push_time - self._time_interval
-
-    def max_timestamp(self, alert_push_time: datetime) -> datetime:
-        return alert_push_time + self._time_interval
-
-    def _fetch_suspect_data_points(self, alert: PerformanceAlert) -> QuerySet:
-        startday = self.min_timestamp(alert.summary.push.time)
-        endday = self.max_timestamp(alert.summary.push.time)
-
-        data = PerformanceDatum.objects.select_related('push').filter(
-            repository_id=alert.series_signature.repository_id,  # leverage compound index
-            signature_id=alert.series_signature_id,
-            push_timestamp__gt=startday,
-            push_timestamp__lt=endday,
-        )
-
-        annotated_data_points = (
-            data
-            # JSONs are more self explanatory
-            # with perf_datum_id instead of id
-            .extra(select={'perf_datum_id': 'performance_datum.id'})
-            .values(
-                'value', 'job_id', 'perf_datum_id', 'push_id', 'push_timestamp', 'push__revision'
+            alert_properties = method.get_alert_properties(
+                prev_value, new_value, signature.lower_is_better
             )
-            .order_by('push_timestamp')
-        )
-        return annotated_data_points
-
-    def _one_data_point_per_push(self, annotated_data_points: QuerySet) -> List[dict]:
-        seen_push_ids = set()
-        seen_add = seen_push_ids.add
-        return [
-            data_point
-            for data_point in annotated_data_points
-            if not (data_point['push_id'] in seen_push_ids or seen_add(data_point['push_id']))
-        ]
-
-    def _find_push_id_index(self, push_id: int, flattened_data_points: List[dict]) -> int:
-        for index, data_point in enumerate(flattened_data_points):
-            if data_point['push_id'] == push_id:
-                return index
-        raise LookupError(f'Could not find push id {push_id}')
-
-    def __compute_window_slices(self, center_index: int) -> slice:
-        side = self._range_width // 2
-
-        left_margin = max(center_index - side, 0)  # cannot have negative start slice
-        right_margin = center_index + side + 1
-
-        return slice(left_margin, right_margin)
-
-    def _glance_over_retrigger_range(self, data_points_to_retrigger: List[dict]):
-        retrigger_range = len(data_points_to_retrigger)
-        if retrigger_range < self._range_width:
-            self.log.warning(
-                'Found small backfill range (of size {} instead of {})'.format(
-                    retrigger_range, self._range_width
-                )
-            )
-
-
-class BackfillReportMaintainer:
-    def __init__(
-        self,
-        alerts_picker: AlertsPicker,
-        backfill_context_fetcher: IdentifyAlertRetriggerables,
-        logger=None,
-    ):
-        """
-        Acquire/instantiate data used for finding alerts.
-        """
-        self.alerts_picker = alerts_picker
-        self.fetch_backfill_context = backfill_context_fetcher
-        self.log = logger or logging.getLogger(self.__class__.__name__)
-
-    def provide_updated_reports(
-        self, since: datetime, frameworks: List[str], repositories: List[str]
-    ) -> List[BackfillReport]:
-        summaries_to_retrigger = self._fetch_by(
-            self._summaries_requiring_reports(since), frameworks, repositories
-        )
-        return self.compile_reports_for(summaries_to_retrigger)
-
-    def compile_reports_for(self, summaries_to_retrigger: QuerySet) -> List[BackfillReport]:
-        reports = []
-
-        for summary in summaries_to_retrigger:
-            important_alerts = self._pick_important_alerts(summary)
-            if len(important_alerts) == 0 and self._doesnt_have_report(summary):
-                continue  # won't create blank reports
-            # but will update if case
-
+            noise_profile = "N/A"
             try:
-                alert_context_map = self._associate_retrigger_context(important_alerts)
-            except MissingRecords as ex:
-                self.log.warning(f"Failed to compute report for alert summary {summary}. {ex}")
-                continue
+                noise_data = []
+                for point in analyzed_series:
+                    if point == cur:
+                        break
+                    noise_data.append(geomean(point.values))
+                noise_profile, _ = moz_measure_noise.deviance(noise_data)
 
-            backfill_report, created = BackfillReport.objects.get_or_create(summary_id=summary.id)
-            # only provide new records if the report is not frozen
-            if not backfill_report.frozen and (created or backfill_report.is_outdated):
-                backfill_report.expel_records()  # associated records are outdated & irrelevant
-                self._provide_records(backfill_report, alert_context_map)
-            reports.append(backfill_report)
+                if not isinstance(noise_profile, str):
+                    raise Exception(
+                        f"Expecting a string as a noise profile, got: {type(noise_profile)}"
+                    )
+            except Exception:
+                pass
 
-        return reports
-
-    def _pick_important_alerts(
-        self, from_summary: PerformanceAlertSummary
-    ) -> List[PerformanceAlert]:
-        return self.alerts_picker.extract_important_alerts(from_summary.alerts.all())
-
-    def _provide_records(self, backfill_report: BackfillReport, alert_context_map: List[Tuple]):
-        for alert, retrigger_context in alert_context_map:
-            BackfillRecord.objects.create(
-                alert=alert,
-                report=backfill_report,
-                context=json.dumps(retrigger_context, default=default_serializer),
+            summary, created_new = PerformanceAlertSummaryTesting.objects.get_or_create(
+                repository=signature.repository,
+                framework=signature.framework,
+                push_id=cur.push_id,
+                prev_push_id=prev.push_id,
+                sheriffed=not signature.monitor,
+                defaults={
+                    "manually_created": False,
+                    "created": datetime.utcfromtimestamp(cur.push_timestamp),
+                },
             )
 
-    def _summaries_requiring_reports(self, timestamp: datetime) -> QuerySet:
-        recent_summaries_with_no_reports = Q(
-            last_updated__gte=timestamp, backfill_report__isnull=True
-        )
-        summaries_with_outdated_reports = Q(last_updated__gt=F('backfill_report__last_updated'))
-
-        return (
-            PerformanceAlertSummary.objects.prefetch_related('backfill_report')
-            .select_related('framework', 'repository')
-            .filter(recent_summaries_with_no_reports | summaries_with_outdated_reports)
-        )
-
-    def _fetch_by(
-        self, summaries_to_retrigger: QuerySet, frameworks: List[str], repositories: List[str]
-    ) -> QuerySet:
-        if frameworks:
-            summaries_to_retrigger = summaries_to_retrigger.filter(framework__name__in=frameworks)
-        if repositories:
-            summaries_to_retrigger = summaries_to_retrigger.filter(
-                repository__name__in=repositories
-            )
-        return summaries_to_retrigger
-
-    def _associate_retrigger_context(self, important_alerts: List[PerformanceAlert]) -> List[Tuple]:
-        retrigger_map = []
-        incomplete_mapping = False
-
-        for alert in important_alerts:
-            try:
-                data_points = self.fetch_backfill_context(alert)
-            except LookupError as ex:
-                incomplete_mapping = True
-                self.log.debug(
-                    f"Couldn't identify retrigger context for alert {alert}. (Exception: {ex})"
+            if created_new:
+                # Set custom timestamp after creation
+                PerformanceAlertSummaryTesting.objects.filter(pk=summary.pk).update(
+                    created=datetime.utcfromtimestamp(cur.push_timestamp)
                 )
-                continue
+                summary.refresh_from_db()
 
-            retrigger_map.append((alert, data_points))
+            confidence = cur.confidence[method.name]
+            if confidence == float("inf"):
+                confidence = 1000
 
-        if incomplete_mapping:
-            expected = len(important_alerts)
-            missing = expected - len(retrigger_map)
-            raise MissingRecords(f'{missing} out of {expected} records are missing!')
+            alert, _ = PerformanceAlertTesting.objects.update_or_create(
+                summary=summary,
+                series_signature=signature,
+                sheriffed=not signature.monitor,
+                detection_method=method.name,
+                telemetry_series_signature=telemetry_sig,
+                defaults={
+                    "noise_profile": noise_profile,
+                    "is_regression": alert_properties.is_regression,
+                    "amount_pct": alert_properties.pct_change,
+                    "amount_abs": alert_properties.delta,
+                    "prev_value": prev_value,
+                    "new_value": new_value,
+                    "t_value": confidence,
+                    "prev_median": 0,
+                    "new_median": 0,
+                    "prev_p90": 0,
+                    "new_p90": 0,
+                    "prev_p95": 0,
+                    "new_p95": 0,
+                },
+            )
+            # Email notifications getting disabled to not bother Sheriffs while doing testing
+            if signature.alert_notify_emails:
+                send_alert_emails(signature.alert_notify_emails.split(), alert, summary)
 
-        return retrigger_map
 
-    def _doesnt_have_report(self, summary):
-        return not hasattr(summary, 'backfill_report')
+def generate_new_test_alerts_in_series(signature):
+    # get series data starting from either:
+    # (1) the last alert, if there is one
+    # (2) the alerts max age
+    # use whichever is newer
+    max_alert_age = alert_after_ts = datetime.now() - settings.PERFHERDER_ALERTS_MAX_AGE
+    series = PerformanceDatum.objects.filter(signature=signature, push_timestamp__gte=max_alert_age)
+    latest_alert_timestamp = (
+        PerformanceAlertTesting.objects.filter(series_signature=signature)
+        .select_related("summary__push__time")
+        .order_by("-summary__push__time")
+        .values_list("summary__push__time", flat=True)[:1]
+    )
+    if latest_alert_timestamp:
+        latest_ts = latest_alert_timestamp[0]
+        series = series.filter(push_timestamp__gt=latest_ts)
+        if latest_ts > alert_after_ts:
+            alert_after_ts = latest_ts
+
+    datum_with_replicates = (
+        PerformanceDatum.objects.filter(
+            signature=signature,
+            repository=signature.repository,
+            push_timestamp__gte=alert_after_ts,
+        )
+        .annotate(
+            has_replicate=Exists(
+                PerformanceDatumReplicate.objects.filter(performance_datum_id=OuterRef("pk"))
+            )
+        )
+        .filter(has_replicate=True)
+    )
+    replicates = PerformanceDatumReplicate.objects.filter(
+        performance_datum_id__in=Subquery(datum_with_replicates.values("id"))
+    ).values_list("performance_datum_id", "value")
+    replicates_map: dict[int, list[float]] = {}
+    for datum_id, value in replicates:
+        replicates_map.setdefault(datum_id, []).append(value)
+
+    revision_data = {}
+    for d in series:
+        if not revision_data.get(d.push_id):
+            revision_data[d.push_id] = RevisionDatumTest(
+                int(time.mktime(d.push_timestamp.timetuple())), d.push_id, [], []
+            )
+        revision_data[d.push_id].values.append(d.value)
+        revision_data[d.push_id].replicates.extend(replicates_map.get(d.id, []))
+
+    data = list(revision_data.values())
+    methods = build_cpd_methods()
+    student_method = methods["student"]
+    analyzed_series = student_method.detect_changes(data, signature, replicates_enabled=REPLICATES)
+
+    with transaction.atomic():
+        create_alerts(signature, student_method, analyzed_series)

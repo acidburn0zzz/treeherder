@@ -1,4 +1,4 @@
-import React from 'react';
+
 import fetchMock from 'fetch-mock';
 import {
   render,
@@ -6,18 +6,26 @@ import {
   waitFor,
   getAllByTestId,
   queryAllByTestId,
+  act,
 } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { Provider } from 'react-redux';
 
 import Health from '../../../ui/push-health/Health';
 import pushHealth from '../mock/push_health';
 import reposFixture from '../mock/repositories';
 import { getApiUrl } from '../../../ui/helpers/url';
 import { getProjectUrl } from '../../../ui/helpers/location';
+import { configureStore } from '../../../ui/job-view/redux/configureStore';
 
 const revision = 'cd02b96bdce57d9ae53b632ca4740c871d3ecc32';
 const repo = 'autoland';
 
 describe('Health', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   beforeAll(() => {
     fetchMock.get(getApiUrl('/repository/'), reposFixture);
     fetchMock.get(getApiUrl('/user/'), []);
@@ -102,7 +110,7 @@ describe('Health', () => {
     );
     fetchMock.get(
       getProjectUrl(
-        '/push/health_summary/?revision=eeb6fd68c0223a72d8714734a34d3e6da69995e1',
+        '/push/health_summary/?revision=eeb6fd68c0223a72d8714734a34d3e6da69995e1&with_in_progress_tests=true',
         repo,
       ),
       [],
@@ -114,15 +122,20 @@ describe('Health', () => {
     cleanup();
   });
 
-  const testHealth = () => <Health location={window.location} />;
+  const testHealth = (
+    initialEntries = [`/push-health?repo=${repo}&revision=${revision}`],
+  ) => {
+    const store = configureStore();
+    return (
+      <Provider store={store}>
+        <MemoryRouter initialEntries={initialEntries}>
+          <Health notify={() => {}} clearNotification={() => {}} />
+        </MemoryRouter>
+      </Provider>
+    );
+  };
 
   test('should show some grouped tests', async () => {
-    window.history.replaceState(
-      {},
-      'Push Health Test',
-      `${window.location.origin}?repo=${repo}&revision=${revision}`,
-    );
-
     const health = render(testHealth());
     const classificationGroups = await waitFor(() =>
       health.getAllByTestId('classification-group'),
@@ -131,31 +144,83 @@ describe('Health', () => {
       classificationGroups[0],
       'test-grouping',
     );
-    const intermittentGroups = getAllByTestId(
-      classificationGroups[1],
-      'test-grouping',
-    );
 
+    // Only showing needInvestigation, not intermittents
+    expect(classificationGroups).toHaveLength(1);
     expect(needInvestigationGroups).toHaveLength(3);
-    expect(intermittentGroups).toHaveLength(39);
   });
 
   test('should filter groups by test path string', async () => {
-    window.history.replaceState(
-      {},
-      'Push Health Test',
-      `${window.location.origin}?repo=${repo}&revision=${revision}&searchStr=browser/extensions/`,
+    const health = render(
+      testHealth([
+        `/push-health?repo=${repo}&revision=${revision}&searchStr=browser/extensions/`,
+      ]),
     );
-    const health = render(testHealth());
     const classificationGroups = await waitFor(() =>
       health.getAllByTestId('classification-group'),
     );
 
+    // Only showing needInvestigation, not intermittents
+    // No tests match "browser/extensions/" in the mock data
+    expect(classificationGroups).toHaveLength(1);
     expect(
       queryAllByTestId(classificationGroups[0], 'test-grouping'),
     ).toHaveLength(0);
+  });
+
+  test('should go to the correct tab if query param exists', async () => {
+    const { getByText } = render(
+      testHealth([`/push-health?repo=${repo}&revision=${revision}&tab=builds`]),
+    );
+
+    const buildsTab = await waitFor(() => getByText('Builds'));
+    expect(buildsTab).toHaveAttribute('aria-selected', 'true');
+  });
+
+  test('should show dismissible intermittent alert by default', async () => {
+    const { getByText } = render(testHealth());
+
+    const alertText = await waitFor(() =>
+      getByText('Displaying only issues not known to be intermittents'),
+    );
+    expect(alertText).toBeInTheDocument();
+  });
+
+  test('should hide intermittent alert when dismissed', async () => {
+    const { getByText, queryByText, getByRole } = render(testHealth());
+
+    // Wait for alert to appear
+    await waitFor(() =>
+      getByText('Displaying only issues not known to be intermittents'),
+    );
+
+    // Click the dismiss button
+    const dismissButton = getByRole('button', { name: /close/i });
+    await act(async () => {
+      dismissButton.click();
+    });
+
+    // Alert should be hidden
+    await waitFor(() => {
+      expect(
+        queryByText('Displaying only issues not known to be intermittents'),
+      ).not.toBeInTheDocument();
+    });
+
+    // LocalStorage should be set
+    expect(localStorage.getItem('dismissedIntermittentAlert')).toBe('true');
+  });
+
+  test('should not show intermittent alert if previously dismissed', async () => {
+    localStorage.setItem('dismissedIntermittentAlert', 'true');
+    const { queryByText } = render(testHealth());
+
+    // Wait for page to load
+    await waitFor(() => queryByText('Possible Regressions'));
+
+    // Alert should not be shown
     expect(
-      queryAllByTestId(classificationGroups[1], 'test-grouping'),
-    ).toHaveLength(2);
+      queryByText('Displaying only issues not known to be intermittents'),
+    ).not.toBeInTheDocument();
   });
 });

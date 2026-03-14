@@ -3,7 +3,12 @@ import datetime
 import pytest
 from django.core.exceptions import ValidationError
 
-from treeherder.perf.models import PerformanceAlert, PerformanceAlertSummary, PerformanceSignature
+from tests.conftest import create_perf_alert
+from treeherder.perf.models import (
+    PerformanceAlert,
+    PerformanceAlertSummary,
+    PerformanceSignature,
+)
 
 
 def test_summary_modification(
@@ -29,52 +34,141 @@ def test_summary_modification(
 
 
 def test_summary_status(
-    test_repository, test_perf_signature, test_perf_alert_summary, test_perf_framework
+    test_repository,
+    test_perf_signature,
+    test_perf_alert_summary,
+    test_perf_framework,
+    test_perf_alert_summary_2,
 ):
     signature1 = test_perf_signature
     signature2 = PerformanceSignature.objects.create(
         repository=test_repository,
-        signature_hash=(40 * 'u'),
+        signature_hash=(40 * "u"),
         framework=test_perf_signature.framework,
         platform=test_perf_signature.platform,
         option_collection=test_perf_signature.option_collection,
-        suite='mysuite_2',
-        test='mytest_2',
+        suite="mysuite_2",
+        test="mytest_2",
         has_subtests=False,
         last_updated=datetime.datetime.now(),
     )
     s = test_perf_alert_summary
 
-    a = PerformanceAlert.objects.create(
+    create_perf_alert(
         summary=s,
         series_signature=signature1,
-        is_regression=True,
-        amount_pct=0.5,
-        amount_abs=50.0,
-        prev_value=100.0,
-        new_value=150.0,
-        t_value=20.0,
+        is_regression=False,
+        # this is the test case
+        # ignore downstream and reassigned to update the summary status
+        related_summary=test_perf_alert_summary_2,
+        status=PerformanceAlert.REASSIGNED,
     )
 
-    # this is the test case
-    # ignore downstream and reassigned to update the summary status
-    a.status = PerformanceAlert.REASSIGNED
-    a.related_summary = s
-    a.save()
-    b = PerformanceAlert.objects.create(
+    create_perf_alert(
         summary=s,
         series_signature=signature2,
         is_regression=False,
-        amount_pct=0.5,
-        amount_abs=50.0,
-        prev_value=100.0,
-        new_value=150.0,
-        t_value=20.0,
+        status=PerformanceAlert.ACKNOWLEDGED,
     )
-    b.status = PerformanceAlert.ACKNOWLEDGED
-    b.save()
+
     s = PerformanceAlertSummary.objects.get(id=1)
     assert s.status == PerformanceAlertSummary.IMPROVEMENT
+
+
+def test_reassigning_regression(
+    test_repository,
+    test_perf_signature,
+    test_perf_alert_summary,
+    test_perf_framework,
+    test_perf_alert_summary_2,
+):
+    signature1 = test_perf_signature
+    signature2 = PerformanceSignature.objects.create(
+        repository=test_repository,
+        signature_hash=(40 * "u"),
+        framework=test_perf_signature.framework,
+        platform=test_perf_signature.platform,
+        option_collection=test_perf_signature.option_collection,
+        suite="mysuite_2",
+        test="mytest_2",
+        has_subtests=False,
+        last_updated=datetime.datetime.now(),
+    )
+    s = test_perf_alert_summary
+
+    untriaged_improvement_alert = create_perf_alert(
+        summary=s,
+        series_signature=signature2,
+        is_regression=False,
+        status=PerformanceAlert.UNTRIAGED,
+    )
+
+    assert s.status == PerformanceAlertSummary.UNTRIAGED
+
+    # reassigning a regression that was in the first summary
+    # to the second summary should leave the status as UNTRIAGED
+    reassigned_alert = create_perf_alert(
+        summary=s,
+        series_signature=signature1,
+        related_summary=test_perf_alert_summary_2,
+        is_regression=True,
+        status=PerformanceAlert.REASSIGNED,
+    )
+
+    assert s.status == PerformanceAlertSummary.UNTRIAGED
+
+    # acknowledging only the untriaged improvement alert, mimicking the UI behaviour
+    # the regression alert will keep it's status of REASSIGNED
+    untriaged_improvement_alert.status = PerformanceAlert.ACKNOWLEDGED
+    untriaged_improvement_alert.save()
+    assert reassigned_alert.status == PerformanceAlert.REASSIGNED
+
+    # Status of the summary with only improvements should automatically
+    # have a status of IMPROVEMENT
+    s = PerformanceAlertSummary.objects.get(id=1)
+    assert s.status == PerformanceAlertSummary.IMPROVEMENT
+
+
+def test_improvement_summary_status_after_reassigning_regression(
+    test_repository,
+    test_perf_signature,
+    test_perf_alert_summary,
+    test_perf_framework,
+    test_perf_alert_summary_2,
+):
+    signature1 = test_perf_signature
+    signature2 = PerformanceSignature.objects.create(
+        repository=test_repository,
+        signature_hash=(40 * "u"),
+        framework=test_perf_signature.framework,
+        platform=test_perf_signature.platform,
+        option_collection=test_perf_signature.option_collection,
+        suite="mysuite_2",
+        test="mytest_2",
+        has_subtests=False,
+        last_updated=datetime.datetime.now(),
+    )
+
+    alert = create_perf_alert(
+        summary=test_perf_alert_summary,
+        series_signature=signature1,
+        is_regression=False,
+        status=PerformanceAlert.ACKNOWLEDGED,
+    )
+
+    assert test_perf_alert_summary.status == PerformanceAlertSummary.IMPROVEMENT
+
+    create_perf_alert(
+        summary=test_perf_alert_summary_2,
+        series_signature=signature2,
+        is_regression=True,
+        related_summary=test_perf_alert_summary,
+        status=PerformanceAlert.REASSIGNED,
+    )
+
+    improvement_alert = PerformanceAlert.objects.get(id=alert.id)
+    assert improvement_alert.status == PerformanceAlert.UNTRIAGED
+    assert test_perf_alert_summary.status == PerformanceAlertSummary.UNTRIAGED
 
 
 def test_alert_modification(

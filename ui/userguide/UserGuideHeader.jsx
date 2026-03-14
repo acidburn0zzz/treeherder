@@ -1,4 +1,4 @@
-import React from 'react';
+
 
 const UserGuideHeader = function UserGuideHeader() {
   return (
@@ -21,8 +21,10 @@ const UserGuideHeader = function UserGuideHeader() {
         {' '}
         Project Wiki{' '}
       </a>
-      or ask us on IRC in
-      <a href="irc://irc.mozilla.org/treeherder"> #treeherder</a>
+      or ask us on Element in{' '}
+      <a href="https://chat.mozilla.org/#/room/#treeherder:mozilla.org">
+        #treeherder
+      </a>
     </div>
   );
 };

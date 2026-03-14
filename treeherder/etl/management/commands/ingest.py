@@ -16,36 +16,29 @@ from django.db import connection
 
 from treeherder.client.thclient import TreeherderClient
 from treeherder.config.settings import GITHUB_TOKEN
-from treeherder.etl.job_loader import JobLoader, MissingPushException
+from treeherder.etl.job_loader import JobLoader, MissingPushError
 from treeherder.etl.push_loader import PushLoader
 from treeherder.etl.pushlog import HgPushlogProcess, last_push_id_from_server
-from treeherder.etl.taskcluster_pulse.handler import EXCHANGE_EVENT_MAP, handleMessage
+from treeherder.etl.taskcluster_pulse.handler import EXCHANGE_EVENT_MAP, handle_message
 from treeherder.model.models import Repository
 from treeherder.utils import github
-from treeherder.utils.github import fetch_json
+from treeherder.utils.github import fetch_api_full_url
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-loop = asyncio.get_event_loop()
-# Limiting the connection pool just in case we have too many
-conn = aiohttp.TCPConnector(limit=10)
-# Remove default timeout limit of 5 minutes
-timeout = aiohttp.ClientTimeout(total=0)
-session = taskcluster.aio.createSession(loop=loop, connector=conn, timeout=timeout)
-
 # Executor to run threads in parallel
 executor = ThreadPoolExecutor()
 
-stateToExchange = {}
+state_to_exchange = {}
 for key, value in EXCHANGE_EVENT_MAP.items():
-    stateToExchange[value] = key
+    state_to_exchange[value] = key
 
 # Semaphore to limit the number of threads opening DB connections when processing jobs
 conn_sem = BoundedSemaphore(50)
 
 
-class Connection(object):
+class Connection:
     def __enter__(self):
         conn_sem.acquire()
 
@@ -55,18 +48,20 @@ class Connection(object):
 
 
 def ingest_pr(pr_url, root_url):
+    if not pr_url.ends_with("/"):
+        pr_url += "/"
     _, _, _, org, repo, _, pull_number, _ = pr_url.split("/", 7)
     pulse = {
         "exchange": "exchange/taskcluster-github/v1/pull-request",
-        "routingKey": "primary.{}.{}.synchronize".format(org, repo),
+        "routingKey": f"primary.{org}.{repo}.synchronize",
         "payload": {
             "repository": repo,
             "organization": org,
             "action": "synchronize",
             "details": {
                 "event.pullNumber": pull_number,
-                "event.base.repo.url": "https://github.com/{}/{}.git".format(org, repo),
-                "event.head.repo.url": "https://github.com/{}/{}.git".format(org, repo),
+                "event.base.repo.url": f"https://github.com/{org}/{repo}.git",
+                "event.head.repo.url": f"https://github.com/{org}/{repo}.git",
             },
         },
     }
@@ -74,49 +69,44 @@ def ingest_pr(pr_url, root_url):
 
 
 def ingest_hg_push(options):
-    if not options["enable_eager_celery"]:
-        logger.info("If you want all logs to be parsed use --enable-eager-celery")
-    else:
-        # Make sure all tasks are run synchronously / immediately
-        settings.CELERY_TASK_ALWAYS_EAGER = True
-
     # get reference to repo and ingest this particular revision for this project
     project = options["project"]
     commit = options["commit"]
 
-    if not options['last_n_pushes'] and not commit:
-        raise CommandError('must specify --last_n_pushes or a positional commit argument')
-    elif options['last_n_pushes'] and options['ingest_all_tasks']:
-        raise CommandError('Can\'t specify last_n_pushes and ingest_all_tasks at same time')
-    elif options['last_n_pushes'] and options['commit']:
-        raise CommandError('Can\'t specify last_n_pushes and commit/revision at the same time')
+    if not options["last_n_pushes"] and not commit:
+        raise CommandError("must specify --last-n-pushes or a positional commit argument")
+    elif options["last_n_pushes"] and options["ingest_all_tasks"]:
+        raise CommandError("Can't specify last_n_pushes and ingest_all_tasks at same time")
+    elif options["last_n_pushes"] and options["commit"]:
+        raise CommandError("Can't specify last_n_pushes and commit/revision at the same time")
     repo = Repository.objects.get(name=project, active_status="active")
     fetch_push_id = None
 
-    if options['last_n_pushes']:
+    if options["last_n_pushes"]:
         last_push_id = last_push_id_from_server(repo)
-        fetch_push_id = max(1, last_push_id - options['last_n_pushes'])
+        fetch_push_id = max(1, last_push_id - options["last_n_pushes"])
         logger.info(
-            'last server push id: %d; fetching push %d and newer',
+            "last server push id: %d; fetching push %d and newer",
             last_push_id,
             fetch_push_id,
         )
     elif options["ingest_all_tasks"]:
         gecko_decision_task = get_decision_task_id(project, commit, repo.tc_root_url)
         logger.info("## START ##")
-        loop.run_until_complete(processTasks(gecko_decision_task, repo.tc_root_url))
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(process_tasks(gecko_decision_task, repo.tc_root_url))
         logger.info("## END ##")
     else:
         logger.info("You can ingest all tasks for a push with -a/--ingest-all-tasks.")
 
-    _ingest_hg_push(project, commit)
+    _ingest_hg_push(project, commit, fetch_push_id)
 
 
 def _ingest_hg_push(project, revision, fetch_push_id=None):
     # get reference to repo
     repo = Repository.objects.get(name=project, active_status="active")
     # get hg pushlog
-    pushlog_url = "%s/json-pushes/?full=1&version=2" % repo.url
+    pushlog_url = f"{repo.url}/json-pushes/?full=1&version=2"
     # ingest this particular revision for this project
     process = HgPushlogProcess()
     # Use the actual push SHA, in case the changeset specified was a tag
@@ -124,29 +114,34 @@ def _ingest_hg_push(project, revision, fetch_push_id=None):
     process.run(pushlog_url, project, changeset=revision, last_push_id=fetch_push_id)
 
 
-async def ingest_task(taskId, root_url):
-    asyncQueue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
-    results = await asyncio.gather(asyncQueue.status(taskId), asyncQueue.task(taskId))
-    await handleTask(
-        {
-            "status": results[0]["status"],
-            "task": results[1],
-        },
-        root_url,
-    )
+async def ingest_task(task_id, root_url):
+    # Limiting the connection pool just in case we have too many
+    conn = aiohttp.TCPConnector(limit=10)
+    # Remove default timeout limit of 5 minutes
+    timeout = aiohttp.ClientTimeout(total=0)
+    async with taskcluster.aio.createSession(connector=conn, timeout=timeout) as session:
+        async_queue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
+        results = await asyncio.gather(async_queue.status(task_id), async_queue.task(task_id))
+        await handle_task(
+            {
+                "status": results[0]["status"],
+                "task": results[1],
+            },
+            root_url,
+        )
 
 
-async def handleTask(task, root_url):
-    taskId = task["status"]["taskId"]
+async def handle_task(task, root_url):
+    task_id = task["status"]["taskId"]
     runs = task["status"]["runs"]
     # If we iterate in order of the runs, we will not be able to mark older runs as
     # "retry" instead of exception
     for run in reversed(runs):
         message = {
-            "exchange": stateToExchange[run["state"]],
+            "exchange": state_to_exchange[run["state"]],
             "payload": {
                 "status": {
-                    "taskId": taskId,
+                    "taskId": task_id,
                     "runs": runs,
                 },
                 "runId": run["runId"],
@@ -155,38 +150,43 @@ async def handleTask(task, root_url):
         }
 
         try:
-            taskRuns = await handleMessage(message, task["task"])
+            task_runs = await handle_message(message, task["task"])
         except Exception as e:
             logger.exception(e)
 
-        if taskRuns:
+        if task_runs:
             # Schedule and run jobs inside the thread pool executor
-            jobFutures = [
-                routine_to_future(process_job_with_threads, run, root_url) for run in taskRuns
+            job_futures = [
+                routine_to_future(process_job_with_threads, run, root_url) for run in task_runs
             ]
-            await await_futures(jobFutures)
+            await await_futures(job_futures)
 
 
-async def fetchGroupTasks(taskGroupId, root_url):
+async def fetch_group_tasks(task_group_id, root_url):
     tasks = []
     query = {}
-    continuationToken = ""
-    asyncQueue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
-    while True:
-        if continuationToken:
-            query = {"continuationToken": continuationToken}
-        response = await asyncQueue.listTaskGroup(taskGroupId, query=query)
-        tasks.extend(response["tasks"])
-        continuationToken = response.get("continuationToken")
-        if continuationToken is None:
-            break
-        logger.info("Requesting more tasks. %s tasks so far...", len(tasks))
-    return tasks
+    continuation_token = ""
+    # Limiting the connection pool just in case we have too many
+    conn = aiohttp.TCPConnector(limit=10)
+    # Remove default timeout limit of 5 minutes
+    timeout = aiohttp.ClientTimeout(total=0)
+    async with taskcluster.aio.createSession(connector=conn, timeout=timeout) as session:
+        async_queue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
+        while True:
+            if continuation_token:
+                query = {"continuationToken": continuation_token}
+            response = await async_queue.listTaskGroup(task_group_id, query=query)
+            tasks.extend(response["tasks"])
+            continuation_token = response.get("continuationToken")
+            if continuation_token is None:
+                break
+            logger.info("Requesting more tasks. %s tasks so far...", len(tasks))
+        return tasks
 
 
-async def processTasks(taskGroupId, root_url):
+async def process_tasks(task_group_id, root_url):
     try:
-        tasks = await fetchGroupTasks(taskGroupId, root_url)
+        tasks = await fetch_group_tasks(task_group_id, root_url)
         logger.info("We have %s tasks to process", len(tasks))
     except Exception as e:
         logger.exception(e)
@@ -195,8 +195,8 @@ async def processTasks(taskGroupId, root_url):
         return
 
     # Schedule and run tasks inside the thread pool executor
-    taskFutures = [routine_to_future(handleTask, task, root_url) for task in tasks]
-    await await_futures(taskFutures)
+    task_futures = [routine_to_future(handle_task, task, root_url) for task in tasks]
+    await await_futures(task_futures)
 
 
 async def routine_to_future(func, *args):
@@ -224,39 +224,40 @@ async def await_futures(fs):
 
 
 def process_job_with_threads(pulse_job, root_url):
-    logger.info("Loading into DB:\t%s", pulse_job["taskId"])
+    task_id = pulse_job.get("taskId", "unknown")
+    logger.info("Loading into DB:\t%s", task_id)
     with Connection():
         try:
             JobLoader().process_job(pulse_job, root_url)
-        except MissingPushException:
-            logger.warning('The push was not in the DB. We are going to try that first')
+        except MissingPushError:
+            logger.warning("The push was not in the DB. We are going to try that first")
             ingest_push(pulse_job["origin"]["project"], pulse_job["origin"]["revision"])
             JobLoader().process_job(pulse_job, root_url)
 
 
 def find_task_id(index_path, root_url):
-    index_url = liburls.api(root_url, 'index', 'v1', 'task/{}'.format(index_path))
+    index_url = liburls.api(root_url, "index", "v1", f"task/{index_path}")
     response = requests.get(index_url)
     if response.status_code == 404:
-        raise Exception("Index URL {} not found".format(index_url))
-    return response.json()['taskId']
+        raise Exception(f"Index URL {index_url} not found")
+    return response.json()["taskId"]
 
 
 def get_decision_task_id(project, revision, root_url):
-    index_fmt = 'gecko.v2.{}.revision.{}.taskgraph.decision'
+    index_fmt = "gecko.v2.{}.revision.{}.taskgraph.decision"
     index_path = index_fmt.format(project, revision)
     return find_task_id(index_path, root_url)
 
 
 def repo_meta(project):
     _repo = Repository.objects.filter(name=project)[0]
-    assert _repo, "The project {} you specified is incorrect".format(project)
-    splitUrl = _repo.url.split("/")
+    assert _repo, f"The project {project} you specified is incorrect"
+    split_url = _repo.url.split("/")
     return {
         "url": _repo.url,
         "branch": _repo.branch,
-        "owner": splitUrl[3],
-        "repo": splitUrl[4],
+        "owner": split_url[3],
+        "repo": split_url[4],
         "tc_root_url": _repo.tc_root_url,
     }
 
@@ -272,19 +273,19 @@ def query_data(repo_meta, commit):
     event_base_sha = repo_meta["branch"]
     # First we try with `master` being the base sha
     # e.g. https://api.github.com/repos/servo/servo/compare/master...1418c0555ff77e5a3d6cf0c6020ba92ece36be2e
-    compareResponse = github.compare_shas(
+    compare_response = github.compare_shas(
         repo_meta["owner"], repo_meta["repo"], repo_meta["branch"], commit
     )
-    merge_base_commit = compareResponse.get("merge_base_commit")
+    merge_base_commit = compare_response.get("merge_base_commit")
     if merge_base_commit:
         commiter_date = merge_base_commit["commit"]["committer"]["date"]
         # Since we don't use PushEvents that contain the "before" or "event.base.sha" fields [1]
         # we need to discover the right parent which existed in the base branch.
         # [1] https://github.com/taskcluster/taskcluster/blob/3dda0adf85619d18c5dcf255259f3e274d2be346/services/github/src/api.js#L55
-        parents = compareResponse["merge_base_commit"]["parents"]
+        parents = compare_response["merge_base_commit"]["parents"]
         if len(parents) == 1:
             parent = parents[0]
-            commit_info = fetch_json(parent["url"])
+            commit_info = fetch_api_full_url(parent["url"])
             committer_date = commit_info["commit"]["committer"]["date"]
             # All commits involved in a PR share the same committer's date
             if merge_base_commit["commit"]["committer"]["date"] == committer_date:
@@ -294,7 +295,7 @@ def query_data(repo_meta, commit):
                 event_base_sha = parent["sha"]
         else:
             for parent in parents:
-                _commit = fetch_json(parent["url"])
+                _commit = fetch_api_full_url(parent["url"])
                 # All commits involved in a merge share the same committer's date
                 if commiter_date != _commit["commit"]["committer"]["date"]:
                     event_base_sha = _commit["sha"]
@@ -303,12 +304,12 @@ def query_data(repo_meta, commit):
         assert event_base_sha != repo_meta["branch"]
         logger.info("We have a new base: %s", event_base_sha)
         # When using the correct event_base_sha the "commits" field will be correct
-        compareResponse = github.compare_shas(
+        compare_response = github.compare_shas(
             repo_meta["owner"], repo_meta["repo"], event_base_sha, commit
         )
 
     commits = []
-    for _commit in compareResponse["commits"]:
+    for _commit in compare_response["commits"]:
         commits.append(
             {
                 "message": _commit["commit"]["message"],
@@ -345,7 +346,7 @@ def github_push_to_pulse(repo_meta, commit):
 
 def ingest_push(project, revision, fetch_push_id=None):
     _repo = repo_meta(project)
-    if _repo['url'].startswith('https://github.com'):
+    if _repo["url"].startswith("https://github.com"):
         pulse = github_push_to_pulse(_repo, revision)
         PushLoader().process(pulse["payload"], pulse["exchange"], _repo["tc_root_url"])
     else:
@@ -370,12 +371,12 @@ def ingest_git_pushes(project, dry_run=False):
     logger.info("--> Converting Github commits to pushes")
     _repo = repo_meta(project)
     owner, repo = _repo["owner"], _repo["repo"]
-    github_commits = github.commits_info(owner, repo)
+    github_commits = github.get_all_commits(owner, repo)
     not_push_revision = []
     push_revision = []
     push_to_date = {}
     for _commit in github_commits:
-        info = github.commit_info(owner, repo, _commit["sha"])
+        info = github.get_commit(owner, repo, _commit["sha"])
         # Revisions that are marked as non-push should be ignored
         if _commit["sha"] in not_push_revision:
             logger.debug("Not a revision of a push: {}".format(_commit["sha"]))
@@ -390,9 +391,7 @@ def ingest_git_pushes(project, dry_run=False):
         oldest_parent_revision = info["parents"][0]["sha"]
         push_to_date[oldest_parent_revision] = info["commit"]["committer"]["date"]
         logger.info(
-            "Push: {} - Date: {}".format(
-                oldest_parent_revision, push_to_date[oldest_parent_revision]
-            )
+            f"Push: {oldest_parent_revision} - Date: {push_to_date[oldest_parent_revision]}"
         )
         push_revision.append(_commit["sha"])
 
@@ -456,25 +455,32 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        typeOfIngestion = options["ingestion_type"][0]
+        loop = asyncio.get_event_loop()
+        type_of_ingestion = options["ingestion_type"][0]
         root_url = options["root_url"]
 
-        if typeOfIngestion == "task":
+        if not options["enable_eager_celery"]:
+            logger.info("If you want all logs to be parsed use --enable-eager-celery")
+        else:
+            # Make sure all tasks are run synchronously / immediately
+            settings.CELERY_TASK_ALWAYS_EAGER = True
+
+        if type_of_ingestion == "task":
             assert options["taskId"]
             loop.run_until_complete(ingest_task(options["taskId"], root_url))
-        elif typeOfIngestion == "prUrl":
+        elif type_of_ingestion == "pr":
             assert options["prUrl"]
             ingest_pr(options["prUrl"], root_url)
-        elif typeOfIngestion.find("git") > -1:
+        elif type_of_ingestion.find("git") > -1:
             if not os.environ.get("GITHUB_TOKEN"):
                 logger.warning(
                     "If you don't set up GITHUB_TOKEN you might hit Github's rate limiting. See docs for info."
                 )
-            if typeOfIngestion == "git-push":
+            if type_of_ingestion == "git-push":
                 ingest_push(options["project"], options["commit"])
-            elif typeOfIngestion == "git-pushes":
+            elif type_of_ingestion == "git-pushes":
                 ingest_git_pushes(options["project"], options["dryRun"])
-        elif typeOfIngestion == "push":
+        elif type_of_ingestion == "push":
             ingest_hg_push(options)
         else:
-            raise Exception('Please check the code for valid ingestion types.')
+            raise Exception("Please check the code for valid ingestion types.")

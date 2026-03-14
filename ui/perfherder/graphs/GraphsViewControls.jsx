@@ -1,24 +1,55 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import {
-  Button,
-  Container,
-  Col,
-  Row,
-  UncontrolledDropdown,
-  DropdownToggle,
-  Input,
-} from 'reactstrap';
+import { Button, Col, Container, Form, Row } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faTable, faChartArea } from '@fortawesome/free-solid-svg-icons';
+import { faChartArea, faTable } from '@fortawesome/free-solid-svg-icons';
 
-import { phTimeRanges } from '../constants';
-import DropdownMenuItems from '../../shared/DropdownMenuItems';
+import dayjs from '../../helpers/dayjs';
+import { endpoints } from '../perf-helpers/constants';
+import { ISODate } from '../../intermittent-failures/helpers';
+import { getData } from '../../helpers/http';
+import { createApiUrl } from '../../helpers/url';
 
 import TestDataModal from './TestDataModal';
 import GraphsContainer from './GraphsContainer';
+import TimeRangeDropdown from './TimeRangeDropdown';
 
 export default class GraphsViewControls extends React.Component {
+  constructor() {
+    super();
+    this.state = {
+      changelogData: [],
+    };
+  }
+
+  componentDidMount = () => {
+    this.getChangelogData();
+  };
+
+  componentDidUpdate = (prevProps) => {
+    const { timeRange } = this.props;
+
+    if (timeRange !== prevProps.timeRange) {
+      this.getChangelogData();
+    }
+  };
+
+  getChangelogData = async () => {
+    const { timeRange } = this.props;
+    const startDate = ISODate(
+      dayjs().utc().subtract(timeRange.value, 'seconds'),
+    );
+
+    const rawData = await getData(
+      createApiUrl(endpoints.changelog, { startdate: startDate }),
+    );
+    const changelogData = rawData.data.map(({ date, ...extra }) => ({
+      date: new Date(date),
+      ...extra,
+    }));
+    this.setState({ changelogData });
+  };
+
   changeHighlightedRevision = (index, newValue) => {
     const { highlightedRevisions, updateStateParams } = this.props;
 
@@ -40,15 +71,20 @@ export default class GraphsViewControls extends React.Component {
       timeRange,
       updateStateParams,
       highlightAlerts,
+      highlightChangelogData,
       highlightedRevisions,
+      highlightCommonAlerts,
       updateTimeRange,
       hasNoData,
       toggle,
       toggleTableView,
-      showModal,
+      replicates,
+      showModal = false,
       showTable,
-      testData,
+      testData = [],
     } = this.props;
+
+    const { changelogData } = this.state;
 
     const measurementUnits = this.extractMeasurementUnitsSet(testData);
 
@@ -62,37 +98,33 @@ export default class GraphsViewControls extends React.Component {
         />
         <Row className="pb-3 max-width-default mx-auto">
           {!hasNoData && (
-            <Col sm="auto" className="pl-0 py-2 pr-3">
-              <Button color="darker-info" onClick={toggleTableView}>
+            <Col sm="auto" className="ps-0 py-2 pe-3">
+              <Button
+                variant="darker-info"
+                onClick={toggleTableView}
+                title="Toggle between table view and graphs view"
+              >
                 {showTable ? (
-                  <FontAwesomeIcon className="mr-2" icon={faChartArea} />
+                  <FontAwesomeIcon className="me-2" icon={faChartArea} />
                 ) : (
-                  <FontAwesomeIcon className="mr-2" icon={faTable} />
+                  <FontAwesomeIcon className="me-2" icon={faTable} />
                 )}
                 {showTable ? 'Graphs View' : 'Table View'}
               </Button>
             </Col>
           )}
-          <Col sm="auto" className="pl-0 py-2 pr-2" key={timeRange}>
-            <UncontrolledDropdown
-              className="mr-0 text-nowrap"
-              title="Time range"
-              aria-label="Time range"
-            >
-              <DropdownToggle caret>{timeRange.text}</DropdownToggle>
-              <DropdownMenuItems
-                options={phTimeRanges.map((item) => item.text)}
-                selectedItem={timeRange.text}
-                updateData={(value) =>
-                  updateTimeRange(
-                    phTimeRanges.find((item) => item.text === value),
-                  )
-                }
-              />
-            </UncontrolledDropdown>
+          <Col sm="auto" className="ps-0 py-2 pe-2" key={timeRange}>
+            <TimeRangeDropdown
+              timeRangeText={timeRange.text}
+              updateTimeRange={updateTimeRange}
+            />
           </Col>
           <Col sm="auto" className="p-2">
-            <Button color="darker-info" onClick={toggle}>
+            <Button
+              variant="darker-info"
+              title="Add test data"
+              onClick={toggle}
+            >
               Add test data
             </Button>
           </Col>
@@ -109,6 +141,7 @@ export default class GraphsViewControls extends React.Component {
             {testData.length > 0 && (
               <GraphsContainer
                 measurementUnits={measurementUnits}
+                changelogData={changelogData}
                 {...this.props}
               />
             )}
@@ -117,8 +150,8 @@ export default class GraphsViewControls extends React.Component {
               {highlightedRevisions.length > 0 &&
                 highlightedRevisions.map((revision, index) => (
                   // eslint-disable-next-line react/no-array-index-key
-                  <Col sm="2" className="pl-0 pr-3" key={index}>
-                    <Input
+                  <Col sm="2" className="ps-0 pe-3" key={index}>
+                    <Form.Control
                       type="text"
                       name={`revision ${revision}`}
                       placeholder="revision to highlight"
@@ -133,16 +166,53 @@ export default class GraphsViewControls extends React.Component {
                   </Col>
                 ))}
               {!showTable && (
-                <Col sm="auto" className="pl-0">
+                <Col sm="auto" className="ps-0">
                   <Button
-                    color="darker-info"
-                    outline
+                    variant="outline-darker-info"
                     onClick={() =>
-                      updateStateParams({ highlightAlerts: !highlightAlerts })
+                      updateStateParams({
+                        highlightAlerts: !highlightAlerts,
+                      })
                     }
                     active={highlightAlerts}
                   >
                     Highlight alerts
+                  </Button>
+                  <Button
+                    className="ms-3"
+                    variant="outline-darker-info"
+                    onClick={() =>
+                      updateStateParams({
+                        highlightChangelogData: !highlightChangelogData,
+                      })
+                    }
+                    active={highlightChangelogData}
+                  >
+                    Highlight infra changes
+                  </Button>
+                  <Button
+                    className="ms-3"
+                    variant="outline-darker-info"
+                    onClick={() =>
+                      updateStateParams({
+                        highlightCommonAlerts: !highlightCommonAlerts,
+                      })
+                    }
+                    active={highlightCommonAlerts}
+                  >
+                    Highlight common alerts
+                  </Button>
+                  <Button
+                    className="ms-3"
+                    variant="outline-darker-info"
+                    onClick={() =>
+                      updateStateParams({
+                        replicates: !replicates,
+                      })
+                    }
+                    active={replicates}
+                  >
+                    Use replicates
                   </Button>
                 </Col>
               )}
@@ -158,6 +228,7 @@ GraphsViewControls.propTypes = {
   updateStateParams: PropTypes.func.isRequired,
   timeRange: PropTypes.shape({}).isRequired,
   highlightAlerts: PropTypes.bool.isRequired,
+  highlightChangelogData: PropTypes.bool.isRequired,
   highlightedRevisions: PropTypes.oneOfType([
     PropTypes.string,
     PropTypes.arrayOf(PropTypes.string),
@@ -172,10 +243,4 @@ GraphsViewControls.propTypes = {
   testData: PropTypes.arrayOf(PropTypes.shape({})),
   showModal: PropTypes.bool,
   toggle: PropTypes.func.isRequired,
-};
-
-GraphsViewControls.defaultProps = {
-  options: undefined,
-  testData: [],
-  showModal: false,
 };

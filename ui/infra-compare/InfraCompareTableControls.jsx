@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Container, CustomInput, Label } from 'reactstrap';
+import { Container, Form } from 'react-bootstrap';
 
 import FilterControls from '../shared/FilterControls';
 
@@ -11,7 +11,10 @@ import InfraCompareTable from './InfraCompareTable';
 export default class CompareTableControls extends React.Component {
   constructor(props) {
     super(props);
-    this.validated = this.props.validated;
+    const {
+      validated = { showOnlyImportant: undefined, hideUncertain: undefined },
+    } = props;
+    this.validated = validated;
     this.state = {
       showImportant: convertParams(this.validated, 'showOnlyImportant'),
       hideUncertain: convertParams(this.validated, 'showOnlyImportant'),
@@ -110,11 +113,11 @@ export default class CompareTableControls extends React.Component {
           updateFilter={this.updateFilter}
           updateFilterText={this.updateFilterText}
         />
-        <Label for="filterPercent">Filter percentage: {filterPercent}%</Label>
-        <CustomInput
-          type="range"
+        <Form.Label htmlFor="filterPercent">
+          Filter percentage: {filterPercent}%
+        </Form.Label>
+        <Form.Range
           id="filterPercent"
-          name="customSelect"
           min={0}
           max={20}
           value={filterPercent}
@@ -129,6 +132,7 @@ export default class CompareTableControls extends React.Component {
         {results.size > 0 ? (
           Array.from(results).map(([platform, data]) => (
             <InfraCompareTable
+              key={platform}
               platform={platform}
               data={data}
               {...this.props}
@@ -148,11 +152,4 @@ CompareTableControls.propTypes = {
     showOnlyImportant: PropTypes.string,
     hideUncertain: PropTypes.string,
   }),
-};
-
-CompareTableControls.defaultProps = {
-  validated: {
-    showOnlyImportant: undefined,
-    hideUncertain: undefined,
-  },
 };

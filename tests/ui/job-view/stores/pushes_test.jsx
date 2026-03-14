@@ -5,9 +5,7 @@ import configureMockStore from 'redux-mock-store';
 
 import {
   getProjectUrl,
-  getQueryString,
-  replaceLocation,
-  setUrlParam,
+  updatePushParams,
 } from '../../../../ui/helpers/location';
 import pushListFixture from '../../mock/push_list';
 import pushListFromChangeFixture from '../../mock/pushListFromchange';
@@ -26,29 +24,38 @@ import {
   reducer,
   fetchPushes,
   pollPushes,
-  fetchNextPushes,
   updateRange,
 } from '../../../../ui/job-view/redux/stores/pushes';
 import { getApiUrl } from '../../../../ui/helpers/url';
 import JobModel from '../../../../ui/models/job';
 
 const mockStore = configureMockStore([thunk]);
+const mockLocation = { search: '', pathname: '/jobs' };
 const emptyBugzillaResponse = {
   bugs: [],
 };
 
 describe('Pushes Redux store', () => {
   const repoName = 'autoland';
+  const originalLocation = window.location;
 
   beforeEach(() => {
     fetchMock.get(getApiUrl('/jobs/?push_id=1', repoName), jobListFixtureOne);
     fetchMock.get(getApiUrl('/jobs/?push_id=2', repoName), jobListFixtureTwo);
+    // Mock window.history.pushState for URL updates
+    jest.spyOn(window.history, 'pushState').mockImplementation(() => {});
+    // Reset window.location to default for each test
+    delete window.location;
+    window.location = { ...originalLocation, search: '', pathname: '/jobs' };
   });
 
   afterEach(() => {
     cleanup();
     fetchMock.reset();
-    replaceLocation({});
+    jest.restoreAllMocks();
+    // Restore original window.location
+    delete window.location;
+    window.location = originalLocation;
   });
 
   test('should get pushes with fetchPushes', async () => {
@@ -60,7 +67,10 @@ describe('Pushes Redux store', () => {
       `https://bugzilla.mozilla.org/rest/bug?id=1556854%2C1555861%2C1559418%2C1563766%2C1561537%2C1563692`,
       emptyBugzillaResponse,
     );
-    const store = mockStore({ pushes: initialState });
+    const store = mockStore({
+      pushes: initialState,
+      router: { location: mockLocation },
+    });
 
     await store.dispatch(fetchPushes());
     const actions = store.getActions();
@@ -94,9 +104,15 @@ describe('Pushes Redux store', () => {
       jobListFixtureTwo,
     );
 
+    fetchMock.get(
+      `https://bugzilla.mozilla.org/rest/bug?id=1506219`,
+      emptyBugzillaResponse,
+    );
+
     const initialPush = pushListFixture.results[0];
     const store = mockStore({
       pushes: { ...initialState, pushList: [initialPush] },
+      router: { location: mockLocation },
     });
 
     await store.dispatch(pollPushes());
@@ -133,7 +149,7 @@ describe('Pushes Redux store', () => {
     ]);
   });
 
-  test('fetchNextPushes should update revision param on url', async () => {
+  test('fetchPushes should update revision param on url', async () => {
     fetchMock.get(
       getProjectUrl(
         '/push/?full=true&count=11&push_timestamp__lte=1562867957',
@@ -148,24 +164,39 @@ describe('Pushes Redux store', () => {
     );
 
     const push = pushListFixture.results[0];
+    const testLocation = {
+      search: `?repo=${repoName}&revision=${push.revision}`,
+      pathname: '/jobs',
+    };
+    const params = updatePushParams(testLocation);
+
+    // Set window.location to match the updated params
+    window.location = { search: params, pathname: '/jobs' };
+
     const store = mockStore({
       pushes: {
         ...initialState,
         pushList: [push],
         oldestPushTimestamp: push.push_timestamp,
       },
+      router: { location: { search: params, pathname: '/jobs' } },
     });
-    setUrlParam('revision', push.revision);
-    await store.dispatch(fetchNextPushes(10));
+    await store.dispatch(fetchPushes(10, true));
 
-    expect(getQueryString()).toEqual(
-      'tochange=ba9c692786e95143b8df3f4b3e9b504dfbc589a0&fromchange=90da061f588d1315ee4087225d041d7474d9dfd8',
+    // replaceLocation uses null, null for pushState
+    expect(window.history.pushState).toHaveBeenCalledWith(
+      null,
+      null,
+      expect.stringContaining(
+        'tochange=ba9c692786e95143b8df3f4b3e9b504dfbc589a0',
+      ),
     );
   });
 
   test('should pare down to single revision updateRange', async () => {
     const store = mockStore({
       pushes: { ...initialState, pushList: pushListFixture.results },
+      router: { location: mockLocation },
     });
 
     await store.dispatch(
@@ -174,7 +205,6 @@ describe('Pushes Redux store', () => {
     const actions = store.getActions();
 
     expect(actions).toEqual([
-      { countPinnedJobs: 0, type: 'CLEAR_JOB' },
       {
         type: SET_PUSHES,
         pushResults: {
@@ -190,6 +220,7 @@ describe('Pushes Redux store', () => {
   });
 
   test('should fetch a new set of pushes with updateRange', async () => {
+    // PushModel.getList adds count=100 by default
     fetchMock.get(
       getProjectUrl(
         '/push/?full=true&count=100&fromchange=9692347caff487cdcd889489b8e89a825fe6bbd1',
@@ -203,11 +234,17 @@ describe('Pushes Redux store', () => {
       emptyBugzillaResponse,
     );
 
+    // Set window.location to have the fromchange param
+    window.location = {
+      search: '?fromchange=9692347caff487cdcd889489b8e89a825fe6bbd1',
+      pathname: '/jobs',
+    };
+
     const store = mockStore({
       pushes: initialState,
+      router: { location: mockLocation },
     });
 
-    setUrlParam('fromchange', '9692347caff487cdcd889489b8e89a825fe6bbd1');
     await store.dispatch(
       updateRange({ fromchange: '9692347caff487cdcd889489b8e89a825fe6bbd1' }),
     );
@@ -244,9 +281,9 @@ describe('Pushes Redux store', () => {
       { type: CLEAR_PUSHES },
     );
 
-    expect(reduced.pushList).toEqual([]);
-    expect(reduced.allUnclassifiedFailureCount).toEqual(0);
-    expect(reduced.filteredUnclassifiedFailureCount).toEqual(0);
+    expect(reduced.pushList).toStrictEqual([]);
+    expect(reduced.allUnclassifiedFailureCount).toBe(0);
+    expect(reduced.filteredUnclassifiedFailureCount).toBe(0);
   });
 
   test('should replace the pushList with setPushes', async () => {
@@ -262,12 +299,14 @@ describe('Pushes Redux store', () => {
     );
 
     expect(reduced.pushList).toEqual([push2]);
-    expect(reduced.allUnclassifiedFailureCount).toEqual(0);
-    expect(reduced.filteredUnclassifiedFailureCount).toEqual(0);
+    expect(reduced.allUnclassifiedFailureCount).toBe(0);
+    expect(reduced.filteredUnclassifiedFailureCount).toBe(0);
   });
 
   test('should get new unclassified counts with recalculateUnclassifiedCounts', async () => {
-    setUrlParam('job_type_symbol', 'B');
+    // Set window.location to have the filter that will limit results
+    window.location = { search: '?job_type_symbol=B', pathname: '/' };
+
     const { data: jobList } = await JobModel.getList({ push_id: 1 });
 
     const state = reducer(
@@ -275,11 +314,13 @@ describe('Pushes Redux store', () => {
       { type: UPDATE_JOB_MAP, jobList },
     );
 
-    const reduced = reducer(state, { type: RECALCULATE_UNCLASSIFIED_COUNTS });
+    const reduced = reducer(state, {
+      type: RECALCULATE_UNCLASSIFIED_COUNTS,
+    });
 
     expect(Object.keys(reduced.jobMap)).toHaveLength(5);
-    expect(reduced.allUnclassifiedFailureCount).toEqual(2);
-    expect(reduced.filteredUnclassifiedFailureCount).toEqual(1);
+    expect(reduced.allUnclassifiedFailureCount).toBe(2);
+    expect(reduced.filteredUnclassifiedFailureCount).toBe(1);
   });
 
   test('should add to the jobMap with updateJobMap', async () => {

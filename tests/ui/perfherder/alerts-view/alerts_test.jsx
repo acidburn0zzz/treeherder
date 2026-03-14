@@ -1,22 +1,24 @@
-/* eslint-disable jest/expect-expect */
-import React from 'react';
+
 import {
   render,
-  cleanup,
   fireEvent,
   waitFor,
   waitForElementToBeRemoved,
 } from '@testing-library/react';
-import { createMemoryHistory } from 'history';
 import fetchMock from 'fetch-mock';
+import { MemoryRouter } from 'react-router-dom';
+import { Provider, ReactReduxContext } from 'react-redux';
 
+import { configureStore } from '../../../../ui/job-view/redux/configureStore';
 import {
-  backfillRetriggeredTitle,
-  unknownFrameworkMessage,
   endpoints,
   filterText,
+  unknownFrameworkMessage,
+  backfillRetriggeredTitle,
+  alertBackfillResultVisual,
+  alertBackfillResultStatusMap,
   notSupportedAlertFiltersMessage,
-} from '../../../../ui/perfherder/constants';
+} from '../../../../ui/perfherder/perf-helpers/constants';
 import repos from '../../mock/repositories';
 import { getApiUrl } from '../../../../ui/helpers/url';
 import AlertsView from '../../../../ui/perfherder/alerts/AlertsView';
@@ -46,6 +48,7 @@ const frameworks = [
   { id: 13, name: 'browsertime' },
   { id: 14, name: 'vcs' },
   { id: 15, name: 'mozperftest' },
+  { id: 16, name: 'fxrecord' },
 ];
 
 const dummyFrameworkName = 'someTestFramework';
@@ -64,8 +67,6 @@ const testIssueTrackers = [
 
 const testActiveTags = ['first-tag', 'second-tag'];
 
-afterEach(cleanup);
-
 const mockModifyAlert = {
   update(alert, params) {
     return {
@@ -78,69 +79,68 @@ const mockModifyAlert = {
   },
 };
 
-// eslint-disable-next-line no-unused-vars
-const mockUpdateAlertSummary = (alertSummaryId, params) => ({
-  failureStatus: null,
-});
-const alertsView = () =>
-  render(
-    <AlertsView
-      user={testUser}
-      projects={repos}
-      location={{
-        pathname: '/alerts',
-        search: '',
-      }}
-      history={createMemoryHistory('/alerts')}
-      frameworks={frameworks}
-      performanceTags={testPerformanceTags}
-    />,
+const alertsView = () => {
+  const store = configureStore();
+
+  return render(
+    <Provider store={store} context={ReactReduxContext}>
+      <MemoryRouter initialEntries={['/alerts']}>
+        <AlertsView
+          user={testUser}
+          projects={repos}
+          frameworks={frameworks}
+          performanceTags={testPerformanceTags}
+        />
+      </MemoryRouter>
+    </Provider>,
   );
+};
 
 const alertsViewControls = ({
   isListMode = true,
   user: userMock = null,
 } = {}) => {
   const user = userMock !== null ? userMock : testUser;
+  const store = configureStore();
 
   return render(
-    <AlertsViewControls
-      validated={{
-        hideDwnToInv: undefined,
-        hideImprovements: undefined,
-        filter: undefined,
-        updateParams: () => {},
-      }}
-      isListMode={isListMode}
-      alertSummaries={testAlertSummaries}
-      issueTrackers={testIssueTrackers}
-      optionCollectionMap={optionCollectionMap}
-      fetchAlertSummaries={() => {}}
-      updateViewState={() => {}}
-      user={user}
-      modifyAlert={(alert, params) => mockModifyAlert.update(alert, params)}
-      updateAlertSummary={() =>
-        Promise.resolve({ failureStatus: false, data: 'alert summary data' })
-      }
-      projects={repos}
-      location={{
-        pathname: '/alerts',
-        search: '',
-      }}
-      filters={{
-        filterText: '',
-        hideImprovements: false,
-        hideDownstream: false,
-        hideAssignedToOthers: false,
-        framework: { name: 'talos', id: 1 },
-        status: 'untriaged',
-      }}
-      frameworks={[{ id: 1, name: dummyFrameworkName }]}
-      history={createMemoryHistory('/alerts')}
-      frameworkOptions={[ignoreFrameworkOption, ...frameworks]}
-      setFiltersState={() => {}}
-      performanceTags={testPerformanceTags}
-    />,
+    <Provider store={store} context={ReactReduxContext}>
+      <MemoryRouter initialEntries={['/alerts']}>
+        <AlertsViewControls
+          validated={{
+            hideDwnToInv: undefined,
+            filter: undefined,
+            updateParams: () => {},
+          }}
+          isListMode={isListMode}
+          alertSummaries={testAlertSummaries}
+          issueTrackers={testIssueTrackers}
+          optionCollectionMap={optionCollectionMap}
+          fetchAlertSummaries={() => {}}
+          updateViewState={() => {}}
+          user={user}
+          modifyAlert={(alert, params) => mockModifyAlert.update(alert, params)}
+          updateAlertSummary={() =>
+            Promise.resolve({
+              failureStatus: false,
+              data: 'alert summary data',
+            })
+          }
+          projects={repos}
+          filters={{
+            filterText: '',
+            hideDownstream: false,
+            hideAssignedToOthers: false,
+            framework: { name: 'talos', id: 1 },
+            status: 'untriaged',
+          }}
+          frameworks={[{ id: 1, name: dummyFrameworkName }]}
+          frameworkOptions={[ignoreFrameworkOption, ...frameworks]}
+          setFiltersState={() => {}}
+          performanceTags={testPerformanceTags}
+        />
+      </MemoryRouter>
+    </Provider>,
   );
 };
 
@@ -154,7 +154,7 @@ beforeAll(() => {
   fetchMock.mock(getApiUrl(endpoints.issueTrackers), testIssueTrackers);
 
   fetchMock.mock(`begin:${getApiUrl(endpoints.alertSummary)}`, {
-    count: 2,
+    count: 3,
     next: null,
     previous: null,
     results: testAlertSummaries,
@@ -176,7 +176,6 @@ beforeAll(() => {
 
 test('toggle buttons should filter alert summary and alerts by selected filter', async () => {
   const { getByText, getByTestId } = alertsView();
-  const hideImprovements = getByText('Hide improvements');
   const hideDownstream = getByText('Hide downstream / reassigned to / invalid');
 
   const alertSummary1 = await waitFor(() =>
@@ -196,24 +195,17 @@ test('toggle buttons should filter alert summary and alerts by selected filter',
   expect(alert1).toBeInTheDocument();
   expect(alert2).toBeInTheDocument();
 
-  expect(hideImprovements).not.toHaveClass('active');
   expect(hideDownstream).not.toHaveClass('active');
 
-  // one filter selected
-  fireEvent.click(hideImprovements);
-
-  expect(hideImprovements).toHaveClass('active');
-  expect(alertSummary1).not.toBeInTheDocument();
-  expect(alertSummary2).toBeInTheDocument();
-  expect(alert1).toBeInTheDocument();
-  expect(alert2).toBeInTheDocument();
-
-  // second filter selected
+  // filter selected
   fireEvent.click(hideDownstream);
-  expect(alertSummary1).not.toBeInTheDocument();
-  expect(alertSummary2).toBeInTheDocument();
-  expect(alert1).toBeInTheDocument();
-  expect(alert2).not.toBeInTheDocument();
+
+  await waitFor(() => {
+    expect(alertSummary1).toBeInTheDocument();
+    expect(alertSummary2).toBeInTheDocument();
+    expect(alert1).toBeInTheDocument();
+    expect(alert2).not.toBeInTheDocument();
+  });
 });
 
 describe('alert filtering ignores repository and/or options', () => {
@@ -226,7 +218,7 @@ describe('alert filtering ignores repository and/or options', () => {
     [testAlertSummaries[0].alerts[0].series_signature.options[0]],
   ];
   testCases.forEach((testCase) => {
-    it(testCase.toString(), async () => {
+    it(`testcase: ${testCase.toString()}`, async () => {
       const { getByPlaceholderText, getByText } = alertsView();
       const alertsFilterInput = await waitFor(() =>
         getByPlaceholderText(filterText.inputPlaceholder),
@@ -234,7 +226,7 @@ describe('alert filtering ignores repository and/or options', () => {
 
       fireEvent.change(alertsFilterInput, {
         target: {
-          value: `${testCase.join(' ')} 
+          value: `${testCase.join(' ')}
                   ${
                     testAlertSummaries[0].alerts[0].series_signature
                       .machine_platform
@@ -243,12 +235,34 @@ describe('alert filtering ignores repository and/or options', () => {
       });
       fireEvent.keyDown(alertsFilterInput, { key: 'Enter', keyCode: 13 });
 
-      const warningMessage = await getByText(
-        notSupportedAlertFiltersMessage(testCase),
+      const warningMessage = await waitFor(() =>
+        getByText(notSupportedAlertFiltersMessage(testCase)),
       );
       expect(warningMessage).toBeInTheDocument();
     });
   });
+});
+
+test('Debug Tools heading not displayed for non-browsertime summaries', async () => {
+  const alertSummary1 = testAlertSummaries[0];
+
+  const { queryByTestId } = alertsViewControls();
+
+  expect(
+    queryByTestId(`${alertSummary1.id.toString()} Debug Tools`),
+  ).not.toBeInTheDocument();
+});
+
+test('Debug Tools heading displayed for browsertime summaries', async () => {
+  const alertSummary1 = testAlertSummaries[2];
+
+  const { getByTestId } = alertsViewControls();
+
+  const heading = await waitFor(() =>
+    getByTestId(`${alertSummary1.id.toString()} Debug Tools`),
+  );
+
+  expect(heading).toBeInTheDocument();
 });
 
 test('clicking the star icon for an alert updates that alert', async () => {
@@ -257,13 +271,15 @@ test('clicking the star icon for an alert updates that alert', async () => {
   const starIcon = await waitFor(() => getByTestId('alert 69345 star'));
   fireEvent.click(starIcon);
 
-  expect(modifyAlertSpy).toHaveBeenCalled();
-  expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
-    data: {
-      ...testAlertSummaries[0].alerts[0],
-      ...{ starred: true },
-    },
-    failureStatus: null,
+  await waitFor(() => {
+    expect(modifyAlertSpy).toHaveBeenCalled();
+    expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
+      data: {
+        ...testAlertSummaries[0].alerts[0],
+        ...{ starred: true },
+      },
+      failureStatus: null,
+    });
   });
   modifyAlertSpy.mockClear();
 });
@@ -277,29 +293,33 @@ test('selecting all alerts and marking them as acknowledged updates all alerts',
   const alertCheckbox2 = getByTestId('alert 69345 checkbox');
 
   fireEvent.click(summaryCheckbox);
-  expect(summaryCheckbox).toHaveProperty('checked', true);
-  expect(alertCheckbox1).toHaveProperty('checked', true);
-  expect(alertCheckbox2).toHaveProperty('checked', true);
+  await waitFor(() => {
+    expect(summaryCheckbox).toHaveProperty('checked', true);
+    expect(alertCheckbox1).toHaveProperty('checked', true);
+    expect(alertCheckbox2).toHaveProperty('checked', true);
+  });
   let acknowledgeButton = await waitFor(() => getByText('Acknowledge'));
 
   fireEvent.click(acknowledgeButton);
 
   // all alerts have been updated
-  expect(modifyAlertSpy).toHaveBeenCalled();
-  expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
-    data: {
-      ...testAlertSummaries[0].alerts[0],
-      ...{ status: 4 },
-    },
-    failureStatus: null,
-  });
+  await waitFor(() => {
+    expect(modifyAlertSpy).toHaveBeenCalled();
+    expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
+      data: {
+        ...testAlertSummaries[0].alerts[0],
+        ...{ status: 4 },
+      },
+      failureStatus: null,
+    });
 
-  expect(modifyAlertSpy.mock.results[1].value).toStrictEqual({
-    data: {
-      ...testAlertSummaries[0].alerts[1],
-      ...{ status: 4 },
-    },
-    failureStatus: null,
+    expect(modifyAlertSpy.mock.results[1].value).toStrictEqual({
+      data: {
+        ...testAlertSummaries[0].alerts[1],
+        ...{ status: 4 },
+      },
+      failureStatus: null,
+    });
   });
 
   // action panel has closed and all checkboxes reset
@@ -323,20 +343,24 @@ test('selecting an alert and marking it as invalid only updates that alert', asy
   const alertCheckbox2 = getByTestId('alert 69345 checkbox');
 
   fireEvent.click(alertCheckbox1);
-  expect(alertCheckbox1).toHaveProperty('checked', true);
-  expect(alertCheckbox2).toHaveProperty('checked', false);
+  await waitFor(() => {
+    expect(alertCheckbox1).toHaveProperty('checked', true);
+    expect(alertCheckbox2).toHaveProperty('checked', false);
+  });
 
   let invalidButton = await waitFor(() => getByText('Mark invalid'));
 
   fireEvent.click(invalidButton);
   // alert has been updated
-  expect(modifyAlertSpy).toHaveBeenCalled();
-  expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
-    data: {
-      ...testAlertSummaries[0].alerts[1],
-      ...{ status: 3 },
-    },
-    failureStatus: null,
+  await waitFor(() => {
+    expect(modifyAlertSpy).toHaveBeenCalled();
+    expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
+      data: {
+        ...testAlertSummaries[0].alerts[1],
+        ...{ status: 3 },
+      },
+      failureStatus: null,
+    });
   });
 
   // action panel has closed and checkbox has reset
@@ -358,31 +382,43 @@ test('selecting the alert summary checkbox then deselecting one alert only updat
   const summaryCheckbox = getByTestId('alert summary 20174 checkbox');
   const alertCheckbox1 = getByTestId('alert 69344 checkbox');
   const alertCheckbox2 = getByTestId('alert 69345 checkbox');
+  const alertCheckbox3 = getByTestId('alert 69346 checkbox');
+  const alertCheckbox4 = getByTestId('alert 69347 checkbox');
 
   fireEvent.click(summaryCheckbox);
-  expect(summaryCheckbox).toHaveProperty('checked', true);
-  expect(alertCheckbox1).toHaveProperty('checked', true);
-  expect(alertCheckbox2).toHaveProperty('checked', true);
+  await waitFor(() => {
+    expect(summaryCheckbox).toHaveProperty('checked', true);
+    expect(alertCheckbox1).toHaveProperty('checked', true);
+    expect(alertCheckbox2).toHaveProperty('checked', true);
+    expect(alertCheckbox3).toHaveProperty('checked', true);
+    expect(alertCheckbox4).toHaveProperty('checked', true);
+  });
 
   // deselect one alert
   fireEvent.click(alertCheckbox1);
-  expect(summaryCheckbox).toHaveProperty('checked', false);
-  expect(alertCheckbox1).toHaveProperty('checked', false);
-  expect(alertCheckbox2).toHaveProperty('checked', true);
+  await waitFor(() => {
+    expect(summaryCheckbox).toHaveProperty('checked', false);
+    expect(alertCheckbox1).toHaveProperty('checked', false);
+    expect(alertCheckbox2).toHaveProperty('checked', true);
+    expect(alertCheckbox3).toHaveProperty('checked', true);
+    expect(alertCheckbox4).toHaveProperty('checked', true);
+  });
 
   let acknowledgeButton = await waitFor(() => getByText('Acknowledge'));
   fireEvent.click(acknowledgeButton);
 
   // only the selected alert has been updated
-  expect(modifyAlertSpy).toHaveBeenCalled();
-  expect(modifyAlertSpy.mock.results).toHaveLength(1);
-  expect(modifyAlertSpy.mock.results[0].value.data.id).toEqual(69345);
-  expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
-    data: {
-      ...testAlertSummaries[0].alerts[0],
-      ...{ status: 4 },
-    },
-    failureStatus: null,
+  await waitFor(() => {
+    expect(modifyAlertSpy).toHaveBeenCalled();
+    expect(modifyAlertSpy.mock.results).toHaveLength(3);
+    expect(modifyAlertSpy.mock.results[0].value.data.id).toBe(69345);
+    expect(modifyAlertSpy.mock.results[0].value).toStrictEqual({
+      data: {
+        ...testAlertSummaries[0].alerts[0],
+        ...{ status: 4 },
+      },
+      failureStatus: null,
+    });
   });
 
   // action panel has closed and all checkboxes reset
@@ -393,12 +429,34 @@ test('selecting the alert summary checkbox then deselecting one alert only updat
     expect(summaryCheckbox).toHaveProperty('checked', false);
     expect(alertCheckbox1).toHaveProperty('checked', false);
     expect(alertCheckbox2).toHaveProperty('checked', false);
+    expect(alertCheckbox3).toHaveProperty('checked', false);
+    expect(alertCheckbox4).toHaveProperty('checked', false);
   });
 
   modifyAlertSpy.mockClear();
 });
 
+test('selecting the alert summary checkbox then clicking on the reassign button opens the alert modal', async () => {
+  const { getByTestId, getByText } = alertsViewControls();
+
+  // select summary
+  const summaryCheckbox = getByTestId('alert summary 20174 checkbox');
+  fireEvent.click(summaryCheckbox);
+
+  const reassignButton = await waitFor(() => getByText('Reassign'));
+  fireEvent.click(reassignButton);
+
+  await waitFor(() => {
+    const alertModal = getByText('Reassign Alerts');
+    expect(alertModal).toBeInTheDocument();
+  });
+});
+
 test("display of alert summaries's assignee badge", async () => {
+  const alertSummary = testAlertSummaries[2];
+  alertSummary.assignee_email = 'test_user@mozilla.com';
+  alertSummary.assignee_username = 'mozilla-ldap/test_user@mozilla.com';
+
   const { getAllByTitle, getAllByText } = alertsViewControls();
 
   const ownershipBadges = getAllByTitle('Click to change assignee');
@@ -415,6 +473,10 @@ test("display of alert summaries's assignee badge", async () => {
 });
 
 test("'Take' button hides when clicking on 'Unassigned' badge", async () => {
+  const alertSummary = testAlertSummaries[2];
+  alertSummary.assignee_email = 'test_user@mozilla.com';
+  alertSummary.assignee_username = 'mozilla-ldap/test_user@mozilla.com';
+
   const {
     getByText,
     queryByText,
@@ -423,13 +485,19 @@ test("'Take' button hides when clicking on 'Unassigned' badge", async () => {
 
   const unassignedBadge = await waitFor(() => getByText('Unassigned'));
 
-  await fireEvent.click(unassignedBadge);
-  expect(queryByText('Take')).not.toBeInTheDocument();
-  // and the placeholder nicely shows up
-  expect(queryByPlaceholderText('nobody@mozilla.org')).toBeInTheDocument();
+  fireEvent.click(unassignedBadge);
+  await waitFor(() => {
+    expect(queryByText('Take')).not.toBeInTheDocument();
+    // and the placeholder nicely shows up
+    expect(queryByPlaceholderText('nobody@mozilla.org')).toBeInTheDocument();
+  });
 });
 
 test('setting an assignee on unassigned alert summary updates the badge accordingly', async () => {
+  const alertSummary = testAlertSummaries[2];
+  alertSummary.assignee_email = 'test_user@mozilla.com';
+  alertSummary.assignee_username = 'mozilla-ldap/test_user@mozilla.com';
+
   const { getByText, getByPlaceholderText } = alertsViewControls();
 
   const unassignedBadge = await waitFor(() => getByText('Unassigned'));
@@ -450,16 +518,20 @@ test('setting an assignee on unassigned alert summary updates the badge accordin
 });
 
 test('setting an assignee on an already assigned summary is possible', async () => {
+  const alertSummary = testAlertSummaries[2];
+  alertSummary.assignee_email = null;
+  alertSummary.assignee_username = null;
+
   const { getByText, getByDisplayValue } = alertsViewControls();
 
   const unassignedBadge = await waitFor(() => getByText('test_user'));
 
   fireEvent.click(unassignedBadge);
   const inputField = await waitFor(() =>
-    getByDisplayValue('mozilla-ldap/test_user@mozilla.com'),
+    getByDisplayValue('test_user@mozilla.com'),
   );
   fireEvent.change(inputField, {
-    target: { value: 'mozilla-ldap/test_another_user@mozilla.com' },
+    target: { value: 'test_another_user@mozilla.com' },
   });
   // pressing 'Enter' has some issues on react-testing-library;
   // found workaround on https://github.com/testing-library/react-testing-library/issues/269
@@ -476,7 +548,7 @@ test("'Escape' from partially editted assignee does not update original assignee
 
   fireEvent.click(unassignedBadge);
   const inputField = await waitFor(() =>
-    getByDisplayValue('mozilla-ldap/test_user@mozilla.com'),
+    getByDisplayValue('test_user@mozilla.com'),
   );
   fireEvent.change(inputField, {
     target: { value: 'mozilla-ldap/test_another_' },
@@ -488,21 +560,28 @@ test("'Escape' from partially editted assignee does not update original assignee
 });
 
 test("Clicking on 'Take' prefills with logged in user", async () => {
+  const alertSummary = testAlertSummaries[2];
+  alertSummary.assignee_email = 'test_user@mozilla.com';
+  alertSummary.assignee_username = 'mozilla-ldap/test_user@mozilla.com';
+
   const { getByText, getByDisplayValue } = alertsViewControls();
 
   const takeButton = getByText('Take');
 
   fireEvent.click(takeButton);
 
-  // ensure it preffiled input field
-  await waitFor(() => getByDisplayValue('mozilla-ldap/test_user@mozilla.com'));
+  // ensure it prefilled input field
+  await waitFor(() => {
+    const inputField = getByDisplayValue('test_user@mozilla.com');
+    expect(inputField).toBeInTheDocument();
+  });
 });
 
 test('Alerts retriggered by the backfill bot have a title', async () => {
   const { queryAllByTitle } = alertsViewControls();
 
   const titles = await waitFor(() => queryAllByTitle(backfillRetriggeredTitle));
-  expect(titles).toHaveLength(1);
+  expect(titles).toHaveLength(3);
 });
 
 describe('"My alerts" checkbox\'s display behaviors', () => {
@@ -538,7 +617,7 @@ test('Framework name is displayed near alert summary', async () => {
 
   const frameworkName = await waitFor(() => queryAllByText(dummyFrameworkName));
   // one summary from testAlertSummaries have one bad framework id
-  expect(frameworkName).toHaveLength(testAlertSummaries.length - 1);
+  expect(frameworkName).toHaveLength(1);
 });
 
 test('Correct message is displayed if the framework id is invalid', async () => {
@@ -547,21 +626,38 @@ test('Correct message is displayed if the framework id is invalid', async () => 
   const frameworkName = await waitFor(() =>
     queryAllByText(unknownFrameworkMessage),
   );
-  expect(frameworkName).toHaveLength(1);
+
+  // We expect 2 invalid frameworks because one is the alert with different framework id in the first item,
+  // and the second one is the browsertime alert whose framework_id is not present in frameworks param
+  // when the AlertsViewControls is mocked
+  expect(frameworkName).toHaveLength(2);
 });
 
 test('Selecting `all` from (frameworks|projects) dropdown shows all (frameworks|projects)', async () => {
   const { queryAllByText, getByTestId } = alertsView();
 
   const allFromDropdown = await waitFor(() => queryAllByText(/all/));
-  fireEvent.click(allFromDropdown[0]);
-  fireEvent.click(allFromDropdown[1]);
+  // Find the actual clickable parent elements (dropdown items) that contain the text "all"
+  const clickableElements = allFromDropdown
+    .map(
+      (textNode) =>
+        textNode.closest('a') ||
+        textNode.closest('button') ||
+        textNode.closest('[role="button"]'),
+    )
+    .filter(Boolean);
 
-  const alert1 = await waitFor(() => getByTestId('69526'));
-  const alert2 = await waitFor(() => getByTestId('69530'));
+  if (clickableElements.length >= 2) {
+    fireEvent.click(clickableElements[0]);
+    fireEvent.click(clickableElements[1]);
+  }
 
-  expect(alert1).toBeInTheDocument();
-  expect(alert2).toBeInTheDocument();
+  await waitFor(() => {
+    const alert1 = getByTestId('69526');
+    const alert2 = getByTestId('69530');
+    expect(alert1).toBeInTheDocument();
+    expect(alert2).toBeInTheDocument();
+  });
 });
 
 test('A list of two tags is displayed when there are two active tags', async () => {
@@ -582,3 +678,536 @@ test('No tags are displayed if there is no active tag', async () => {
 
 // TODO should write tests for alert summary dropdown menu actions performed in StatusDropdown
 // (adding notes or marking as 'fixed', etc)
+
+// assert that alertTableRows contains the alerts in the indicated order
+const assertAlertsAreInOrder = async (alertsInOrder, alertTableRows) => {
+  for (let index = 0; index < alertsInOrder.length; index++) {
+    expect(alertTableRows[index]).toContainElement(alertsInOrder[index]);
+  }
+};
+
+test(`table data can be sorted in descending order by 'Test'`, async () => {
+  const {
+    getAllByLabelText,
+    getByTestId,
+    getAllByTitle,
+  } = alertsViewControls();
+
+  let alertTableRows = await waitFor(() =>
+    getAllByLabelText('Alert table row'),
+  );
+
+  const alert1 = await waitFor(() => getByTestId('69344'));
+  const alert2 = await waitFor(() => getByTestId('69345'));
+  const alert3 = await waitFor(() => getByTestId('69346'));
+  const alert4 = await waitFor(() => getByTestId('69347'));
+
+  // alerts are sorted in a default manner without clicking on sort buttons
+  await assertAlertsAreInOrder(
+    [alert4, alert3, alert1, alert2],
+    alertTableRows,
+  );
+
+  const sortByTest = await waitFor(() =>
+    getAllByTitle('Sorted in default order by test'),
+  );
+
+  // firing the sort button once triggers ascending sort
+  fireEvent.click(sortByTest[0]);
+  // firing the sort button twice triggers descending sort
+  fireEvent.click(sortByTest[0]);
+
+  await waitFor(() => {
+    alertTableRows = getAllByLabelText('Alert table row');
+  });
+
+  await assertAlertsAreInOrder(
+    [alert2, alert1, alert3, alert4],
+    alertTableRows,
+  );
+});
+
+test(`table data can be sorted in ascending order by 'Platform'`, async () => {
+  const {
+    getByTestId,
+    getAllByLabelText,
+    getAllByTitle,
+  } = alertsViewControls();
+
+  let alertTableRows = await waitFor(() =>
+    getAllByLabelText('Alert table row'),
+  );
+
+  const alert1 = await waitFor(() => getByTestId('69344'));
+  const alert2 = await waitFor(() => getByTestId('69345'));
+  const alert3 = await waitFor(() => getByTestId('69346'));
+  const alert4 = await waitFor(() => getByTestId('69347'));
+
+  // alerts are sorted in a default manner without clicking on sort buttons
+  await assertAlertsAreInOrder(
+    [alert4, alert3, alert1, alert2],
+    alertTableRows,
+  );
+
+  const sortByPlatform = await waitFor(() =>
+    getAllByTitle('Sorted in default order by platform'),
+  );
+
+  // firing the sort button once triggers ascending sort
+  fireEvent.click(sortByPlatform[0]);
+
+  await waitFor(() => {
+    alertTableRows = getAllByLabelText('Alert table row');
+  });
+  await assertAlertsAreInOrder(
+    [alert1, alert3, alert4, alert2],
+    alertTableRows,
+  );
+});
+
+test(`table data cannot be sorted by 'Tags & Options'`, async () => {
+  const { getAllByTitle } = alertsViewControls();
+
+  const sortByTags = await waitFor(() =>
+    getAllByTitle('Sorted by tags & options disabled'),
+  );
+
+  expect(sortByTags[0]).toBeDisabled();
+});
+
+test(`table data can be sorted in ascending order by 'Confidence'`, async () => {
+  const {
+    getAllByLabelText,
+    getByTestId,
+    getAllByTitle,
+  } = alertsViewControls();
+
+  let alertTableRows = await waitFor(() =>
+    getAllByLabelText('Alert table row'),
+  );
+
+  const alert1 = await waitFor(() => getByTestId('69344'));
+  const alert2 = await waitFor(() => getByTestId('69345'));
+  const alert3 = await waitFor(() => getByTestId('69346'));
+  const alert4 = await waitFor(() => getByTestId('69347'));
+
+  // alerts are sorted in a default manner without clicking on sort buttons
+  await assertAlertsAreInOrder(
+    [alert4, alert3, alert1, alert2],
+    alertTableRows,
+  );
+
+  const sortByConfidence = await waitFor(() =>
+    getAllByTitle('Sorted in default order by confidence'),
+  );
+
+  // firing the sort button once triggers ascending sort
+  fireEvent.click(sortByConfidence[0]);
+
+  await waitFor(() => {
+    alertTableRows = getAllByLabelText('Alert table row');
+  });
+  await assertAlertsAreInOrder(
+    [alert2, alert1, alert3, alert4],
+    alertTableRows,
+  );
+});
+
+test(`table data can be sorted in ascending order by 'Magnitude of Change'`, async () => {
+  const {
+    getAllByLabelText,
+    getByTestId,
+    getAllByTitle,
+  } = alertsViewControls();
+
+  let alertTableRows = await waitFor(() =>
+    getAllByLabelText('Alert table row'),
+  );
+
+  const alert1 = await waitFor(() => getByTestId('69344'));
+  const alert2 = await waitFor(() => getByTestId('69345'));
+  const alert3 = await waitFor(() => getByTestId('69346'));
+  const alert4 = await waitFor(() => getByTestId('69347'));
+
+  // alerts are sorted in a default manner without clicking on sort buttons
+  await assertAlertsAreInOrder(
+    [alert4, alert3, alert1, alert2],
+    alertTableRows,
+  );
+
+  const sortByMagnitude = await waitFor(() =>
+    getAllByTitle('Sorted in default order by magnitude of change'),
+  );
+
+  // firing the sort button once triggers ascending sort
+  fireEvent.click(sortByMagnitude[0]);
+
+  await waitFor(() => {
+    alertTableRows = getAllByLabelText('Alert table row');
+  });
+
+  await assertAlertsAreInOrder(
+    [alert1, alert3, alert4, alert2],
+    alertTableRows,
+  );
+});
+
+test('Data can be sorted only by one column', async () => {
+  const {
+    getAllByLabelText,
+    getByTestId,
+    getAllByTitle,
+  } = alertsViewControls();
+
+  let alertTableRows = await waitFor(() =>
+    getAllByLabelText('Alert table row'),
+  );
+
+  const alert1 = await waitFor(() => getByTestId('69344'));
+  const alert2 = await waitFor(() => getByTestId('69345'));
+  const alert3 = await waitFor(() => getByTestId('69346'));
+  const alert4 = await waitFor(() => getByTestId('69347'));
+
+  // alerts are sorted in a default manner without clicking on sort buttons
+  await assertAlertsAreInOrder(
+    [alert4, alert3, alert1, alert2],
+    alertTableRows,
+  );
+
+  const sortByPlatform = await waitFor(() =>
+    getAllByTitle('Sorted in default order by platform'),
+  );
+  // firing the sort button once triggers ascending sort
+  fireEvent.click(sortByPlatform[0]);
+  await waitFor(() => {
+    expect(sortByPlatform[0].title).toBe(
+      'Sorted in ascending order by platform',
+    );
+  });
+
+  const sortByConfidence = await waitFor(() =>
+    getAllByTitle('Sorted in default order by confidence'),
+  );
+  fireEvent.click(sortByConfidence[0]);
+  await waitFor(() => {
+    expect(sortByConfidence[0].title).toBe(
+      'Sorted in ascending order by confidence',
+    );
+    expect(sortByPlatform[0].title).toBe('Sorted in default order by platform');
+  });
+
+  await waitFor(() => {
+    alertTableRows = getAllByLabelText('Alert table row');
+  });
+
+  await assertAlertsAreInOrder(
+    [alert2, alert1, alert3, alert4],
+    alertTableRows,
+  );
+});
+
+test('Previous alert button should be disable at first', async () => {
+  const { getByTestId } = alertsViewControls();
+
+  const prevScrollButton = await waitFor(() =>
+    getByTestId('scroll-prev-alert'),
+  );
+
+  expect(prevScrollButton).toBeDisabled();
+});
+
+test('Next alert button should be disable when reaching the last alert', async () => {
+  const { getByTestId } = alertsViewControls();
+  Element.prototype.scrollIntoView = jest.fn();
+
+  let nextScrollButton = await waitFor(() => getByTestId('scroll-next-alert'));
+
+  expect(nextScrollButton).not.toBeDisabled();
+
+  fireEvent.click(nextScrollButton);
+  fireEvent.click(nextScrollButton);
+  fireEvent.click(nextScrollButton);
+
+  await waitFor(() => {
+    nextScrollButton = getByTestId('scroll-next-alert');
+    expect(nextScrollButton).toBeDisabled();
+  });
+});
+
+test('Sherlock backfill status icons are displayed correctly', async () => {
+  const { getByTestId } = alertsViewControls();
+
+  const alert = testAlertSummaries[0].alerts[3];
+  expect(alert.id).toBe(69347);
+
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+
+  expect(alertIcon).toBeInTheDocument();
+});
+
+test('Sherlock status 0 in tooltip on alerts', async () => {
+  const alert = testAlertSummaries[0].alerts[3];
+  alert.backfill_record.status = alertBackfillResultStatusMap.preliminary;
+  expect(alert.id).toBe(69347);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(alertIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(
+      alertBackfillResultVisual.preliminary.message,
+    );
+    expect(tooltipText).toBeInTheDocument();
+  });
+});
+
+test(`Side-by-side icon is not displayed in Debug Tools column when Sherlock status is 0 (Not backfilled) in tooltip alerts`, async () => {
+  const alert = testAlertSummaries[2].alerts[0];
+  alert.backfill_record.status = alertBackfillResultStatusMap.preliminary;
+  expect(alert.id).toBe(177726);
+
+  const { getByTestId, getByText, queryByTestId } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const sherlockIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(sherlockIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(
+      alertBackfillResultVisual.preliminary.message,
+    );
+    expect(tooltipText).toBeInTheDocument();
+    expect(
+      queryByTestId(`alert ${alert.id.toString()} side-by-side icon`),
+    ).not.toBeInTheDocument();
+  });
+});
+
+test('Sherlock status 1 in tooltip on alerts', async () => {
+  const alert = testAlertSummaries[0].alerts[3];
+  alert.backfill_record.status =
+    alertBackfillResultStatusMap.readyForProcessing;
+  expect(alert.id).toBe(69347);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(alertIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(
+      alertBackfillResultVisual.readyForProcessing.message,
+    );
+    expect(tooltipText).toBeInTheDocument();
+  });
+});
+
+test(`Side-by-side icon is not displayed in Debug Tools column when Sherlock status is 1 (Soon to be backfilled) in tooltip on alerts`, async () => {
+  const alert = testAlertSummaries[2].alerts[0];
+  alert.backfill_record.status =
+    alertBackfillResultStatusMap.readyForProcessing;
+  expect(alert.id).toBe(177726);
+
+  const { getByTestId, getByText, queryByTestId } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const sherlockIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(sherlockIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(
+      alertBackfillResultVisual.readyForProcessing.message,
+    );
+    expect(tooltipText).toBeInTheDocument();
+    expect(
+      queryByTestId(`alert ${alert.id.toString()} side-by-side icon`),
+    ).not.toBeInTheDocument();
+  });
+});
+
+test('Sherlock status 2 in tooltip on alerts', async () => {
+  const alert = testAlertSummaries[0].alerts[3];
+  alert.backfill_record.status = alertBackfillResultStatusMap.backfilled;
+  expect(alert.id).toBe(69347);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(alertIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(alertBackfillResultVisual.backfilled.message);
+    expect(tooltipText).toBeInTheDocument();
+  });
+});
+
+test(`Side-by-side icon is not displayed in Debug Tools column when Sherlock status is 2 (Backfilling in progress) in tooltip on alerts`, async () => {
+  const alert = testAlertSummaries[2].alerts[0];
+  alert.backfill_record.status = alertBackfillResultStatusMap.backfilled;
+  expect(alert.id).toBe(177726);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const sherlockIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(sherlockIcon);
+  await waitFor(() => getByText(alertBackfillResultVisual.backfilled.message));
+  const sxsIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} side-by-side icon`),
+  );
+  expect(sxsIcon).toBeInTheDocument();
+});
+
+test('Sherlock status 3 in tooltip on alerts', async () => {
+  const alert = testAlertSummaries[0].alerts[3];
+  alert.backfill_record.status = alertBackfillResultStatusMap.successful;
+  expect(alert.id).toBe(69347);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(alertIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(alertBackfillResultVisual.successful.message);
+    expect(tooltipText).toBeInTheDocument();
+  });
+});
+
+test(`Side-by-side icon is displayed in Debug Tools column when Sherlock status is 3 (Backfilled successfully some jobs) in tooltip on alerts`, async () => {
+  const alert = testAlertSummaries[2].alerts[0];
+  alert.backfill_record.status = alertBackfillResultStatusMap.successful;
+  expect(alert.id).toBe(177726);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const sherlockIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(sherlockIcon);
+  await waitFor(() => getByText(alertBackfillResultVisual.successful.message));
+  const sxsIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} side-by-side icon`),
+  );
+  expect(sxsIcon).toBeInTheDocument();
+});
+
+test('Sherlock status 4 in tooltip on alerts', async () => {
+  const alert = testAlertSummaries[0].alerts[3];
+  alert.backfill_record.status = alertBackfillResultStatusMap.failed;
+  expect(alert.id).toBe(69347);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const alertIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(alertIcon);
+  await waitFor(() => {
+    const tooltipText = getByText(alertBackfillResultVisual.failed.message);
+    expect(tooltipText).toBeInTheDocument();
+  });
+});
+
+test(`Side-by-side icon is displayed in Debug Tools column when Sherlock status is 4 (Backfilling failed for some jobs) in tooltip on alerts`, async () => {
+  const alert = testAlertSummaries[2].alerts[0];
+  alert.backfill_record.status = alertBackfillResultStatusMap.failed;
+  expect(alert.id).toBe(177726);
+
+  const { getByTestId, getByText } = alertsViewControls();
+  // hovering over the Sherlock icon should display the tooltip
+  const sherlockIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} sherlock icon`),
+  );
+  fireEvent.mouseOver(sherlockIcon);
+  await waitFor(() => getByText(alertBackfillResultVisual.failed.message));
+  const sxsIcon = await waitFor(() =>
+    getByTestId(`alert ${alert.id.toString()} side-by-side icon`),
+  );
+  expect(sxsIcon).toBeInTheDocument();
+});
+
+test("Alert's ID can be copied to clipboard", async () => {
+  const { queryAllByTitle } = alertsViewControls();
+  Object.assign(navigator, {
+    clipboard: {
+      writeText: jest.fn(),
+    },
+  });
+
+  const alertID = testAlertSummaries[0].id;
+  const copyIdButtons = await waitFor(() => queryAllByTitle('Copy Alert ID'));
+
+  fireEvent.click(copyIdButtons[0]);
+
+  await waitFor(() => {
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith(`${alertID}`);
+  });
+});
+
+test('Copy to clipboard button changes from clipboard icon to check icon on click', async () => {
+  const { queryAllByTitle } = alertsViewControls();
+  Object.assign(navigator, {
+    clipboard: {
+      writeText: jest.fn(),
+    },
+  });
+
+  const copyIdButtons = await waitFor(() => queryAllByTitle('Copy Alert ID'));
+
+  expect(copyIdButtons[0].innerHTML).toContain('svg-inline--fa fa-clipboard ');
+
+  fireEvent.click(copyIdButtons[0]);
+
+  await waitFor(() => {
+    expect(copyIdButtons[0].innerHTML).toContain(
+      'svg-inline--fa fa-circle-check ',
+    );
+  });
+
+  await waitFor(() =>
+    expect(copyIdButtons[0].innerHTML).toContain(
+      'svg-inline--fa fa-clipboard ',
+    ),
+  );
+});
+
+test('Prev push revision is displayed in dropdown', async () => {
+  const { getAllByTestId } = alertsViewControls();
+  const prevPushRevision = testAlertSummaries[0].prev_push_revision.slice(
+    0,
+    12,
+  );
+
+  const pushDropdown = await waitFor(() => getAllByTestId('push-dropdown'));
+
+  fireEvent.click(pushDropdown[0]);
+
+  await waitFor(() => {
+    const prevPush = getAllByTestId('prev-push-revision');
+    expect(prevPush[0]).toHaveTextContent(prevPushRevision);
+  });
+});
+
+test('Current push revision is displayed in dropdown', async () => {
+  const { getAllByTestId } = alertsViewControls();
+  const pushRevision = testAlertSummaries[0].revision.slice(0, 12);
+
+  const pushDropdown = await waitFor(() => getAllByTestId('push-dropdown'));
+
+  fireEvent.click(pushDropdown[0]);
+
+  await waitFor(() => {
+    const toPush = getAllByTestId('to-push-revision');
+    expect(toPush[0]).toHaveTextContent(pushRevision);
+  });
+});

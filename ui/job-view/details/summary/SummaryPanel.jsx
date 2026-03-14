@@ -13,24 +13,43 @@ class SummaryPanel extends React.PureComponent {
   render() {
     const {
       selectedJobFull,
-      latestClassification,
+      latestClassification = null,
       bugs,
-      jobLogUrls,
-      jobDetailLoading,
-      logViewerUrl,
-      logViewerFullUrl,
-      logParseStatus,
+      jobLogUrls = [],
+      jobDetails = [],
+      jobDetailLoading = false,
+      logViewerUrl = null,
+      logViewerFullUrl = null,
+      logParseStatus = 'pending',
       user,
       currentRepo,
       classificationMap,
     } = this.props;
 
+    const logs = jobLogUrls.filter(
+      (log) => !log.name.includes('perfherder-data'),
+    );
+    const artifacts = jobLogUrls.filter((artifact) =>
+      artifact.name.includes('perfherder-data'),
+    );
     const logStatus = [
       {
         title: 'Log parsing status',
-        value: !jobLogUrls.length
+        value: !logs.length
           ? 'No logs'
-          : jobLogUrls.map((log) => log.parse_status).join(', '),
+          : logs.map((log) => log.parse_status).join(', '),
+      },
+    ];
+    const artifactStatus = [
+      {
+        title: 'Artifact parsing status',
+        value: !artifacts.length ? 'No artifacts' : null,
+        subfields: artifacts.length
+          ? artifacts.map((artifact) => ({
+              name: artifact.name,
+              value: artifact.parse_status,
+            }))
+          : null,
       },
     ];
 
@@ -46,9 +65,10 @@ class SummaryPanel extends React.PureComponent {
           logParseStatus={logParseStatus}
           currentRepo={currentRepo}
           isTryRepo={currentRepo.is_try_repo}
+          jobDetails={jobDetails}
           logViewerUrl={logViewerUrl}
           logViewerFullUrl={logViewerFullUrl}
-          jobLogUrls={jobLogUrls}
+          jobLogUrls={logs}
           user={user}
         />
         <div id="summary-panel-content">
@@ -78,7 +98,7 @@ class SummaryPanel extends React.PureComponent {
             <StatusPanel selectedJobFull={selectedJobFull} />
             <JobInfo
               job={selectedJobFull}
-              extraFields={logStatus}
+              extraFields={[...logStatus, ...artifactStatus]}
               currentRepo={currentRepo}
             />
           </ul>
@@ -89,26 +109,24 @@ class SummaryPanel extends React.PureComponent {
 }
 
 SummaryPanel.propTypes = {
-  bugs: PropTypes.arrayOf(PropTypes.object).isRequired,
+  bugs: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   user: PropTypes.shape({}).isRequired,
   currentRepo: PropTypes.shape({}).isRequired,
   classificationMap: PropTypes.shape({}).isRequired,
   selectedJobFull: PropTypes.shape({}).isRequired,
   latestClassification: PropTypes.shape({}),
-  jobLogUrls: PropTypes.arrayOf(PropTypes.object),
+  jobLogUrls: PropTypes.arrayOf(PropTypes.shape({})),
+  jobDetails: PropTypes.arrayOf(
+    PropTypes.shape({
+      url: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+      title: PropTypes.string.isRequired,
+    }),
+  ),
   jobDetailLoading: PropTypes.bool,
   logParseStatus: PropTypes.string,
   logViewerUrl: PropTypes.string,
   logViewerFullUrl: PropTypes.string,
-};
-
-SummaryPanel.defaultProps = {
-  latestClassification: null,
-  jobLogUrls: [],
-  jobDetailLoading: false,
-  logParseStatus: 'pending',
-  logViewerUrl: null,
-  logViewerFullUrl: null,
 };
 
 export default SummaryPanel;

@@ -1,12 +1,15 @@
 import datetime
 import itertools
 import logging
-import re
 import time
+import warnings
 from hashlib import sha1
 
 import newrelic.agent
+from django.conf import settings
 from django.contrib.auth.models import User
+from django.contrib.postgres.indexes import GinIndex
+from django.contrib.postgres.search import SearchVectorField, TrigramSimilarity
 from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from django.core.validators import MinLengthValidator
@@ -18,19 +21,17 @@ from django.utils import timezone
 
 from treeherder.webapp.api.utils import REPO_GROUPS, to_timestamp
 
-logger = logging.getLogger(__name__)
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="newrelic")
 
-# MySQL Full Text Search operators, based on:
-# https://dev.mysql.com/doc/refman/5.7/en/fulltext-boolean.html
-mysql_fts_operators_re = re.compile(r'[-+@<>()~*"]')
+logger = logging.getLogger(__name__)
 
 
 class FailuresQuerySet(models.QuerySet):
-    def by_bug(self, bug_id):
-        return self.filter(bug_id=int(bug_id))
+    def by_bug(self, bugzilla_id):
+        return self.filter(bug__bugzilla_id=int(bugzilla_id))
 
     def by_date(self, startday, endday):
-        return self.select_related('push', 'job').filter(job__push__time__range=(startday, endday))
+        return self.select_related("push", "job").filter(job__push__time__range=(startday, endday))
 
     def by_repo(self, name, bugjobmap=True):
         if name in REPO_GROUPS:
@@ -40,7 +41,7 @@ class FailuresQuerySet(models.QuerySet):
                 if bugjobmap
                 else self.filter(repository_id__in=repo)
             )
-        elif name == 'all':
+        elif name == "all":
             return self
         else:
             return (
@@ -63,7 +64,7 @@ class NamedModel(models.Model):
 
 class Product(NamedModel):
     class Meta:
-        db_table = 'product'
+        db_table = "product"
 
 
 class BuildPlatform(models.Model):
@@ -73,47 +74,55 @@ class BuildPlatform(models.Model):
     architecture = models.CharField(max_length=25, blank=True, db_index=True)
 
     class Meta:
-        db_table = 'build_platform'
+        db_table = "build_platform"
         unique_together = ("os_name", "platform", "architecture")
 
     def __str__(self):
-        return "{0} {1} {2}".format(self.os_name, self.platform, self.architecture)
+        return f"{self.os_name} {self.platform} {self.architecture}"
 
 
 class Option(NamedModel):
     class Meta:
-        db_table = 'option'
+        db_table = "option"
 
 
 class RepositoryGroup(NamedModel):
-
+    # Fields are pre-defined in fixtures/repository_group.json
     description = models.TextField(blank=True)
 
     class Meta:
-        db_table = 'repository_group'
+        db_table = "repository_group"
 
 
 class Repository(models.Model):
     id = models.AutoField(primary_key=True)
-    repository_group = models.ForeignKey('RepositoryGroup', on_delete=models.CASCADE)
+    repository_group = models.ForeignKey("RepositoryGroup", on_delete=models.CASCADE)
     name = models.CharField(max_length=50, unique=True, db_index=True)
     dvcs_type = models.CharField(max_length=25, db_index=True)
     url = models.CharField(max_length=255)
     branch = models.CharField(max_length=255, null=True, db_index=True)
     codebase = models.CharField(max_length=50, blank=True, db_index=True)
     description = models.TextField(blank=True)
-    active_status = models.CharField(max_length=7, blank=True, default='active', db_index=True)
+    active_status = models.CharField(max_length=7, blank=True, default="active", db_index=True)
+    life_cycle_order = models.PositiveIntegerField(null=True, default=None)
     performance_alerts_enabled = models.BooleanField(default=False)
     expire_performance_data = models.BooleanField(default=True)
     is_try_repo = models.BooleanField(default=False)
     tc_root_url = models.CharField(max_length=255, null=False, db_index=True)
 
     class Meta:
-        db_table = 'repository'
-        verbose_name_plural = 'repositories'
+        db_table = "repository"
+        verbose_name_plural = "repositories"
+        indexes = [
+            models.Index(fields=["url", "active_status"], name="repo_url_active_idx"),
+        ]
+
+    @classmethod
+    def fetch_all_names(cls) -> list[str]:
+        return cls.objects.values_list("name", flat=True)
 
     def __str__(self):
-        return "{0} {1}".format(self.name, self.repository_group)
+        return f"{self.name} {self.repository_group}"
 
 
 class Push(models.Model):
@@ -133,11 +142,14 @@ class Push(models.Model):
     objects = models.Manager()
 
     class Meta:
-        db_table = 'push'
-        unique_together = ('repository', 'revision')
+        db_table = "push"
+        unique_together = ("repository", "revision")
 
     def __str__(self):
-        return "{0} {1}".format(self.repository.name, self.revision)
+        return f"{self.repository.name} {self.revision}"
+
+    def total_jobs(self, job_type, result):
+        return self.jobs.filter(job_type=job_type, result=result).count()
 
     def get_status(self):
         """
@@ -147,23 +159,23 @@ class Push(models.Model):
             Job.objects.filter(push=self)
             .filter(
                 Q(failure_classification__isnull=True)
-                | Q(failure_classification__name='not classified')
+                | Q(failure_classification__name="not classified")
             )
             .exclude(tier=3)
         )
 
-        status_dict = {'completed': 0, 'pending': 0, 'running': 0}
-        for (state, result, total) in jobs.values_list('state', 'result').annotate(
-            total=Count('result')
+        status_dict = {"completed": 0, "pending": 0, "running": 0}
+        for state, result, total in jobs.values_list("state", "result").annotate(
+            total=Count("result")
         ):
-            if state == 'completed':
+            if state == "completed":
                 status_dict[result] = total
                 status_dict[state] += total
             else:
                 status_dict[state] = total
-        if 'superseded' in status_dict:
+        if "superseded" in status_dict:
             # backward compatability for API consumers
-            status_dict['coalesced'] = status_dict['superseded']
+            status_dict["coalesced"] = status_dict["superseded"]
 
         return status_dict
 
@@ -173,17 +185,21 @@ class Commit(models.Model):
     A single commit in a push
     """
 
-    push = models.ForeignKey(Push, on_delete=models.CASCADE, related_name='commits')
+    push = models.ForeignKey(Push, on_delete=models.CASCADE, related_name="commits")
     revision = models.CharField(max_length=40, db_index=True)
     author = models.CharField(max_length=150)
     comments = models.TextField()
+    search_vector = SearchVectorField(null=True, blank=True)
 
     class Meta:
-        db_table = 'commit'
-        unique_together = ('push', 'revision')
+        db_table = "commit"
+        unique_together = ("push", "revision")
+        indexes = [
+            GinIndex(fields=["search_vector"], name="search_vector_idx"),
+        ]
 
     def __str__(self):
-        return "{0} {1}".format(self.push.repository.name, self.revision)
+        return f"{self.push.repository.name} {self.revision}"
 
 
 class MachinePlatform(models.Model):
@@ -193,130 +209,163 @@ class MachinePlatform(models.Model):
     architecture = models.CharField(max_length=25, blank=True, db_index=True)
 
     class Meta:
-        db_table = 'machine_platform'
+        db_table = "machine_platform"
         unique_together = ("os_name", "platform", "architecture")
 
     def __str__(self):
-        return "{0} {1} {2}".format(self.os_name, self.platform, self.architecture)
+        return f"{self.os_name} {self.platform} {self.architecture}"
 
 
 class Bugscache(models.Model):
-    id = models.PositiveIntegerField(primary_key=True)
+    id = models.BigAutoField(primary_key=True)
+
+    # Optional reference towards a bug in Bugzilla, once is has been reported as occurring many times in a week
+    bugzilla_id = models.PositiveIntegerField(null=True, blank=True)
+
     status = models.CharField(max_length=64, db_index=True)
     resolution = models.CharField(max_length=64, blank=True, db_index=True)
     # Is covered by a FULLTEXT index created via a migrations RunSQL operation.
     summary = models.CharField(max_length=255)
+    dupe_of = models.PositiveIntegerField(null=True)
     crash_signature = models.TextField(blank=True)
     keywords = models.TextField(blank=True)
-    os = models.CharField(max_length=64, blank=True)
     modified = models.DateTimeField()
-    whiteboard = models.CharField(max_length=100, blank=True, default='')
+    whiteboard = models.CharField(max_length=100, blank=True, default="")
+    processed_update = models.BooleanField(default=True)
 
     class Meta:
-        db_table = 'bugscache'
-        verbose_name_plural = 'bugscache'
+        db_table = "bugscache"
+        verbose_name_plural = "bugscache"
+        indexes = [
+            models.Index(fields=["summary"]),
+        ]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bugzilla_id"],
+                name="unique_bugzilla_id",
+                condition=Q(bugzilla_id__isnull=False),
+            )
+        ]
 
     def __str__(self):
-        return "{0}".format(self.id)
+        return f"{self.id}"
+
+    def serialize(self):
+        exclude_fields = ["modified", "processed_update", "jobmap"]
+
+        attrs = model_to_dict(self, exclude=exclude_fields)
+        # Serialize bug ID as the bugzilla number for compatibility reasons
+        attrs["internal_id"] = attrs["id"]
+        attrs["id"] = attrs.pop("bugzilla_id")
+
+        attrs["occurrences"] = None
+        if attrs["id"] is None:
+            # Only fetch occurrences for internal issues. It causes one extra query
+            attrs["occurrences"] = self.jobmap.filter(
+                created__gte=timezone.now()
+                - datetime.timedelta(days=settings.INTERNAL_OCCURRENCES_DAYS_WINDOW)
+            ).count()
+        return attrs
 
     @classmethod
     def search(cls, search_term):
         max_size = 50
+        search_term = search_term.lower()
 
-        # 365 days ago as limit for recent bugs which get suggested by default
-        # if they are not resolved. Other bugs, both older or resolved, are
-        # hidden by default with a "Show / Hide More" link.
-        time_limit = datetime.datetime.now() - datetime.timedelta(days=365)
-
-        # Replace MySQL's Full Text Search Operators with spaces so searching
-        # for errors that have been pasted in still works.
-        sanitised_term = re.sub(mysql_fts_operators_re, " ", search_term)
-
-        # Wrap search term so it is used as a phrase in the full-text search.
-        search_term_fulltext = '"%s"' % sanitised_term
-
-        # Substitute escape and wildcard characters, so the search term is used
-        # literally in the LIKE statement.
-        search_term_like = search_term.replace('=', '==').replace('%', '=%').replace('_', '=_')
-
-        recent_qs = cls.objects.raw(
-            """
-            SELECT id, summary, crash_signature, keywords, os, resolution, status,
-             MATCH (`summary`) AGAINST (%s IN BOOLEAN MODE) AS relevance
-              FROM bugscache
-             WHERE 1
-               AND resolution = ''
-               AND `summary` LIKE CONCAT ('%%%%', %s, '%%%%') ESCAPE '='
-               AND modified >= %s
-          ORDER BY relevance DESC
-             LIMIT 0,%s
-            """,
-            [search_term_fulltext, search_term_like, time_limit, max_size],
+        # On PostgreSQL we can use the ORM directly, but NOT the full text search
+        # as the ranking algorithm expects english words, not paths
+        # So we use standard pattern matching AND trigram similarity to compare suite of characters
+        # instead of words
+        # Django already escapes special characters, so we do not need to handle that here
+        recent_qs = (
+            Bugscache.objects.filter(summary__icontains=search_term)
+            .annotate(similarity=TrigramSimilarity("summary", search_term))
+            .order_by("-similarity")[0:max_size]
         )
 
         try:
-            open_recent = [model_to_dict(item, exclude=["modified"]) for item in recent_qs]
+            open_recent_match_string = [item.serialize() for item in recent_qs]
+            all_data = [
+                match
+                for match in open_recent_match_string
+                if match["summary"].lower().startswith(search_term)
+                or "/" + search_term in match["summary"].lower()
+                or " " + search_term in match["summary"].lower()
+                or "\\" + search_term in match["summary"].lower()
+                or "," + search_term in match["summary"].lower()
+            ]
+            open_recent = [x for x in all_data if x["resolution"] == ""]
+            all_others = [x for x in all_data if x["resolution"] != ""]
         except ProgrammingError as e:
-            newrelic.agent.record_exception()
+            newrelic.agent.notice_error()
             logger.error(
-                'Failed to execute FULLTEXT search on Bugscache, error={}, SQL={}'.format(
-                    e, recent_qs.query.__str__()
-                )
+                f"Failed to execute FULLTEXT search on Bugscache, error={e}, SQL={recent_qs.query.__str__()}"
             )
             open_recent = []
-
-        all_others_qs = cls.objects.raw(
-            """
-            SELECT id, summary, crash_signature, keywords, os, resolution, status,
-             MATCH (`summary`) AGAINST (%s IN BOOLEAN MODE) AS relevance
-              FROM bugscache
-             WHERE 1
-               AND `summary` LIKE CONCAT ('%%%%', %s, '%%%%') ESCAPE '='
-               AND (modified < %s OR resolution <> '')
-          ORDER BY relevance DESC
-             LIMIT 0,%s
-            """,
-            [search_term_fulltext, search_term_like, time_limit, max_size],
-        )
-
-        try:
-            all_others = [model_to_dict(item, exclude=["modified"]) for item in all_others_qs]
-        except ProgrammingError as e:
-            newrelic.agent.record_exception()
-            logger.error(
-                'Failed to execute FULLTEXT search on Bugscache, error={}, SQL={}'.format(
-                    e, recent_qs.query.__str__()
-                )
-            )
             all_others = []
 
         return {"open_recent": open_recent, "all_others": all_others}
 
 
+class BugzillaComponent(models.Model):
+    product = models.CharField(max_length=60)
+    component = models.CharField(max_length=60)
+
+    class Meta:
+        db_table = "bugzilla_component"
+        verbose_name_plural = "bugzilla_components"
+        unique_together = ("product", "component")
+
+    def __str__(self):
+        return f"{self.product} :: {self.component}"
+
+
+class FilesBugzillaMap(models.Model):
+    path = models.CharField(max_length=255, unique=True, db_index=True)
+    file_name = models.CharField(max_length=255, db_index=True)
+    bugzilla_component = models.ForeignKey("BugzillaComponent", on_delete=models.CASCADE)
+
+    class Meta:
+        db_table = "file_bugzilla_component"
+        verbose_name_plural = "files_bugzilla_components"
+
+    def __str__(self):
+        return f"{self.path}"
+
+
+class BugzillaSecurityGroup(models.Model):
+    product = models.CharField(max_length=60, unique=True, db_index=True)
+    security_group = models.CharField(max_length=60)
+
+    class Meta:
+        db_table = "bugzilla_security_group"
+        verbose_name_plural = "bugzilla_security_groups"
+
+
 class Machine(NamedModel):
     class Meta:
-        db_table = 'machine'
+        db_table = "machine"
 
 
 class JobGroup(models.Model):
     id = models.AutoField(primary_key=True)
-    symbol = models.CharField(max_length=25, default='?', db_index=True)
-    name = models.CharField(max_length=100)
+    symbol = models.CharField(max_length=25, default="?", db_index=True)
+    name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
 
     class Meta:
-        db_table = 'job_group'
-        unique_together = ('name', 'symbol')
+        db_table = "job_group"
+        unique_together = ("name", "symbol")
 
     def __str__(self):
-        return "{0} ({1})".format(self.name, self.symbol)
+        return f"{self.name} ({self.symbol})"
 
 
 class OptionCollectionManager(models.Manager):
-    cache_key = 'option_collection_map'
-    '''
+    cache_key = "option_collection_map"
+    """
     Convenience function to determine the option collection map
-    '''
+    """
 
     def get_option_collection_map(self):
         option_collection_map = cache.get(self.cache_key)
@@ -325,13 +374,13 @@ class OptionCollectionManager(models.Manager):
             return option_collection_map
 
         option_collection_map = {}
-        for (hash, option_name) in OptionCollection.objects.values_list(
-            'option_collection_hash', 'option__name'
+        for hash, option_name in OptionCollection.objects.values_list(
+            "option_collection_hash", "option__name"
         ):
             if not option_collection_map.get(hash):
                 option_collection_map[hash] = option_name
             else:
-                option_collection_map[hash] += ' ' + option_name
+                option_collection_map[hash] += " " + option_name
 
         # Caches for the default of 5 minutes.
         cache.set(self.cache_key, option_collection_map)
@@ -351,38 +400,37 @@ class OptionCollection(models.Model):
         options = sorted(list(options))
         sha_hash = sha1()
         # equivalent to loop over the options and call sha_hash.update()
-        sha_hash.update(''.join(options).encode('utf-8'))
+        sha_hash.update("".join(options).encode("utf-8"))
         return sha_hash.hexdigest()
 
     class Meta:
-        db_table = 'option_collection'
-        unique_together = ('option_collection_hash', 'option')
+        db_table = "option_collection"
+        unique_together = ("option_collection_hash", "option")
 
     def __str__(self):
-        return "{0}".format(self.option)
+        return f"{self.option}"
 
 
 class JobType(models.Model):
     id = models.AutoField(primary_key=True)
-    symbol = models.CharField(max_length=25, default='?', db_index=True)
+    symbol = models.CharField(max_length=25, default="?", db_index=True)
     name = models.CharField(max_length=140)
     description = models.TextField(blank=True)
 
     class Meta:
-        db_table = 'job_type'
-        unique_together = (('name', 'symbol'),)
+        db_table = "job_type"
+        unique_together = (("name", "symbol"),)
 
     def __str__(self):
-        return "{0} ({1})".format(self.name, self.symbol)
+        return f"{self.name} ({self.symbol})"
 
 
 class FailureClassification(NamedModel):
     class Meta:
-        db_table = 'failure_classification'
+        db_table = "failure_classification"
 
 
 class ReferenceDataSignatures(models.Model):
-
     """
     A collection of all the possible combinations of reference data,
     populated on data ingestion. signature is a hash of the data it refers to
@@ -399,7 +447,7 @@ class ReferenceDataSignatures(models.Model):
     machine_os_name = models.CharField(max_length=25, db_index=True)
     machine_platform = models.CharField(max_length=100, db_index=True)
     machine_architecture = models.CharField(max_length=25, db_index=True)
-    job_group_name = models.CharField(max_length=100, blank=True, db_index=True)
+    job_group_name = models.CharField(max_length=255, blank=True, db_index=True)
     job_group_symbol = models.CharField(max_length=25, blank=True, db_index=True)
     job_type_name = models.CharField(max_length=140, db_index=True)
     job_type_symbol = models.CharField(max_length=25, blank=True, db_index=True)
@@ -409,10 +457,10 @@ class ReferenceDataSignatures(models.Model):
     first_submission_timestamp = models.IntegerField(db_index=True)
 
     class Meta:
-        db_table = 'reference_data_signatures'
+        db_table = "reference_data_signatures"
         # Remove if/when the model is renamed to 'ReferenceDataSignature'.
-        verbose_name_plural = 'reference data signatures'
-        unique_together = ('name', 'signature', 'build_system_type', 'repository')
+        verbose_name_plural = "reference data signatures"
+        unique_together = ("name", "signature", "build_system_type", "repository")
 
 
 class JobManager(models.Manager):
@@ -434,7 +482,7 @@ class JobManager(models.Manager):
                 return jobs_cycled
             max_id = min_id + chunk_size
             max_chunk = Job.objects.filter(id__lt=max_id).aggregate(
-                submit_time=Max("submit_time"), id=Max("id"), count=Count("id")
+                submit_time=Max("submit_time"), count=Count("id")
             )
             if max_chunk["count"] == 0 or max_chunk["submit_time"] > jobs_max_timestamp:
                 # this next chunk is too young, we are done
@@ -483,30 +531,31 @@ class Job(models.Model):
     FAILED = 255
 
     AUTOCLASSIFY_STATUSES = (
-        (PENDING, 'pending'),
-        (CROSSREFERENCED, 'crossreferenced'),
-        (AUTOCLASSIFIED, 'autoclassified'),
-        (SKIPPED, 'skipped'),
-        (FAILED, 'failed'),
+        (PENDING, "pending"),
+        (CROSSREFERENCED, "crossreferenced"),
+        (AUTOCLASSIFIED, "autoclassified"),
+        (SKIPPED, "skipped"),
+        (FAILED, "failed"),
     )
 
     repository = models.ForeignKey(Repository, on_delete=models.CASCADE)
     guid = models.CharField(max_length=50, unique=True)
     project_specific_id = models.PositiveIntegerField(null=True)  # unused, see bug 1328985
+    # TODO: Remove autoclassify_status next time jobs table is modified (bug 1594822)
     autoclassify_status = models.IntegerField(choices=AUTOCLASSIFY_STATUSES, default=PENDING)
 
     # TODO: Remove coalesced_to_guid next time the jobs table is modified (bug 1402992)
     coalesced_to_guid = models.CharField(max_length=50, null=True, default=None)
     signature = models.ForeignKey(ReferenceDataSignatures, on_delete=models.CASCADE)
-    build_platform = models.ForeignKey(BuildPlatform, on_delete=models.CASCADE, related_name='jobs')
+    build_platform = models.ForeignKey(BuildPlatform, on_delete=models.CASCADE, related_name="jobs")
     machine_platform = models.ForeignKey(MachinePlatform, on_delete=models.CASCADE)
     machine = models.ForeignKey(Machine, on_delete=models.CASCADE)
     option_collection_hash = models.CharField(max_length=64)
-    job_type = models.ForeignKey(JobType, on_delete=models.CASCADE, related_name='jobs')
-    job_group = models.ForeignKey(JobGroup, on_delete=models.CASCADE, related_name='jobs')
+    job_type = models.ForeignKey(JobType, on_delete=models.CASCADE, related_name="jobs")
+    job_group = models.ForeignKey(JobGroup, on_delete=models.CASCADE, related_name="jobs")
     product = models.ForeignKey(Product, on_delete=models.CASCADE)
     failure_classification = models.ForeignKey(
-        FailureClassification, on_delete=models.CASCADE, related_name='jobs'
+        FailureClassification, on_delete=models.CASCADE, related_name="jobs"
     )
     who = models.CharField(max_length=50)
     reason = models.CharField(max_length=125)
@@ -521,30 +570,45 @@ class Job(models.Model):
     running_eta = models.PositiveIntegerField(null=True, default=None)
     tier = models.PositiveIntegerField()
 
-    push = models.ForeignKey(Push, on_delete=models.CASCADE, related_name='jobs')
+    push = models.ForeignKey(Push, on_delete=models.CASCADE, related_name="jobs")
 
     class Meta:
-        db_table = 'job'
-        index_together = [
+        db_table = "job"
+        indexes = [
             # these speed up the various permutations of the "similar jobs"
             # queries
-            ('repository', 'job_type', 'start_time'),
-            ('repository', 'build_platform', 'job_type', 'start_time'),
-            ('repository', 'option_collection_hash', 'job_type', 'start_time'),
-            ('repository', 'build_platform', 'option_collection_hash', 'job_type', 'start_time'),
+            models.Index(fields=["repository", "job_type", "start_time"]),
+            models.Index(fields=["repository", "build_platform", "job_type", "start_time"]),
+            models.Index(fields=["repository", "option_collection_hash", "job_type", "start_time"]),
+            models.Index(
+                fields=[
+                    "repository",
+                    "build_platform",
+                    "option_collection_hash",
+                    "job_type",
+                    "start_time",
+                ]
+            ),
             # this is intended to speed up queries for specific platform /
             # option collections on a push
-            ('machine_platform', 'option_collection_hash', 'push'),
+            models.Index(fields=["machine_platform", "option_collection_hash", "push"]),
             # speed up cycle data
-            ('repository', 'submit_time'),
+            models.Index(fields=["repository", "submit_time"]),
         ]
 
+    @property
+    def tier_is_sheriffable(self) -> bool:
+        """
+        Tier 3 jobs are not considered stable enough to be sheriffed.
+        """
+        return self.tier < 3
+
     def __str__(self):
-        return "{0} {1} {2}".format(self.id, self.repository, self.guid)
+        return f"{self.id} {self.repository} {self.guid}"
 
     def get_platform_option(self, option_collection_map=None):
-        if not hasattr(self, 'platform_option'):
-            self.platform_option = ''
+        if not hasattr(self, "platform_option"):
+            self.platform_option = ""
             option_hash = self.option_collection_hash
             if option_hash:
                 if not option_collection_map:
@@ -553,69 +617,13 @@ class Job(models.Model):
 
         return self.platform_option
 
-    def save(self, *args, **kwargs):
+    def save(self, *args, update_fields=None, **kwargs):
         self.last_modified = datetime.datetime.now()
-        super().save(*args, **kwargs)
 
-    def is_fully_autoclassified(self):
-        """
-        Returns whether a job is fully autoclassified (i.e. we have
-        classification information for all failure lines)
-        """
-        if FailureLine.objects.filter(job_guid=self.guid, action="truncated").count() > 0:
-            return False
+        if update_fields is not None:
+            update_fields = {"last_modified"}.union(update_fields)
 
-        classified_error_count = TextLogError.objects.filter(
-            _metadata__best_classification__isnull=False, job=self
-        ).count()
-
-        if classified_error_count == 0:
-            return False
-
-        from treeherder.model.error_summary import get_useful_search_results
-
-        return classified_error_count == len(get_useful_search_results(self))
-
-    def is_fully_verified(self):
-        """
-        Determine if this Job is fully verified based on the state of its Errors.
-
-        An Error (TextLogError or FailureLine) is considered Verified once its
-        related TextLogErrorMetadata has best_is_verified set to True.  A Job
-        is then considered Verified once all its Errors TextLogErrorMetadata
-        instances are set to True.
-        """
-        unverified_errors = TextLogError.objects.filter(
-            _metadata__best_is_verified=False, job=self
-        ).count()
-
-        if unverified_errors:
-            logger.error("Job %r has unverified TextLogErrors", self)
-            return False
-
-        logger.info("Job %r is fully verified", self)
-        return True
-
-    def update_after_verification(self, user):
-        """
-        Updates a job's state after being verified by a sheriff
-        """
-        if not self.is_fully_verified():
-            return
-
-        classification = 'autoclassified intermittent'
-
-        already_classified = (
-            JobNote.objects.filter(job=self)
-            .exclude(failure_classification__name=classification)
-            .exists()
-        )
-        if already_classified:
-            # Don't add an autoclassification note if a Human already
-            # classified this job.
-            return
-
-        JobNote.create_autoclassify_job_note(job=self, user=user)
+        super().save(*args, update_fields=update_fields, **kwargs)
 
     def get_manual_classification_line(self):
         """
@@ -664,7 +672,7 @@ class Job(models.Model):
         decision_type = JobType.objects.filter(name="Gecko Decision Task", symbol="D")
         return Job.objects.get(
             repository_id=self.repository_id,
-            job_type_id=Subquery(decision_type.values('id')[:1]),
+            job_type_id=Subquery(decision_type.values("id")[:1]),
             push_id=self.push_id,
         )
 
@@ -682,7 +690,7 @@ class TaskclusterMetadata(models.Model):
     """
 
     job = models.OneToOneField(
-        Job, on_delete=models.CASCADE, primary_key=True, related_name='taskcluster_metadata'
+        Job, on_delete=models.CASCADE, primary_key=True, related_name="taskcluster_metadata"
     )
 
     task_id = models.CharField(max_length=22, validators=[MinLengthValidator(22)], db_index=True)
@@ -705,10 +713,10 @@ class JobLog(models.Model):
     SKIPPED_SIZE = 3
 
     STATUSES = (
-        (PENDING, 'pending'),
-        (PARSED, 'parsed'),
-        (FAILED, 'failed'),
-        (SKIPPED_SIZE, 'skipped-size'),
+        (PENDING, "pending"),
+        (PARSED, "parsed"),
+        (FAILED, "failed"),
+        (SKIPPED_SIZE, "skipped-size"),
     )
 
     job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="job_log")
@@ -718,19 +726,19 @@ class JobLog(models.Model):
 
     class Meta:
         db_table = "job_log"
-        unique_together = ('job', 'name', 'url')
+        unique_together = ("job", "name", "url")
 
     def __str__(self):
-        return "{0} {1} {2} {3}".format(self.id, self.job.guid, self.name, self.status)
+        return f"{self.id} {self.job.guid} {self.name} {self.status}"
 
     def update_status(self, status):
         self.status = status
-        self.save(update_fields=['status'])
+        self.save(update_fields=["status"])
 
 
 class BugJobMap(models.Model):
     """
-    Maps job_ids to related bug_ids
+    Maps job_ids to related bug. It supports referencing an internal issue (bug without a Bugzilla ID).
 
     Mappings can be made manually through a UI or from doing lookups in the
     BugsCache
@@ -739,16 +747,22 @@ class BugJobMap(models.Model):
     id = models.BigAutoField(primary_key=True)
 
     job = models.ForeignKey(Job, on_delete=models.CASCADE)
-    bug_id = models.PositiveIntegerField(db_index=True)
-    created = models.DateTimeField(default=timezone.now)
+    bug = models.ForeignKey("Bugscache", on_delete=models.CASCADE, related_name="jobmap")
+    created = models.DateTimeField(auto_now_add=True)
     user = models.ForeignKey(User, on_delete=models.CASCADE, null=True)  # null if autoclassified
+    bug_open = models.BooleanField(default=False)
 
     failures = FailuresQuerySet.as_manager()
     objects = models.Manager()
 
     class Meta:
         db_table = "bug_job_map"
-        unique_together = ('job', 'bug_id')
+        constraints = [
+            models.UniqueConstraint(
+                fields=["job", "bug"],
+                name="unique_job_bug_mapping",
+            )
+        ]
 
     @property
     def who(self):
@@ -758,11 +772,22 @@ class BugJobMap(models.Model):
             return "autoclassifier"
 
     @classmethod
-    def create(cls, job_id, bug_id, user=None):
+    def create(cls, *, job_id, internal_bug_id=None, bugzilla_id=None, user=None, bug_open=False):
+        if (bool(internal_bug_id) ^ bool(bugzilla_id)) is False:
+            raise ValueError("Only one of internal bug ID or Bugzilla ID must be set")
+        if internal_bug_id:
+            bug_reference = {"bug_id": internal_bug_id}
+        else:
+            # Try mapping Bugzilla ID to internal reference of a bug
+            try:
+                bug_reference = {
+                    "bug_id": Bugscache.objects.only("id").get(bugzilla_id=bugzilla_id).id
+                }
+            except Bugscache.DoesNotExist:
+                raise ValueError(f"No bug found with Bugzilla ID {bugzilla_id}")
+
         bug_map = BugJobMap.objects.create(
-            job_id=job_id,
-            bug_id=bug_id,
-            user=user,
+            job_id=job_id, user=user, bug_open=bug_open, **bug_reference
         )
 
         if not user:
@@ -780,18 +805,19 @@ class BugJobMap(models.Model):
             text_log_error.metadata.best_classification if text_log_error.metadata else None
         )
 
-        if classification is None:
-            return bug_map  # no classification to update
-
-        if classification.bug_number:
-            return bug_map  # classification already has a bug number
-
-        classification.set_bug(bug_id)
+        if (
+            bugzilla_id
+            # no classification to update
+            and classification is not None
+            # classification already has a bug number
+            and not classification.bug_number
+        ):
+            classification.set_bug(bugzilla_id)
 
         return bug_map
 
     def __str__(self):
-        return "{0} {1} {2} {3}".format(self.id, self.job.guid, self.bug_id, self.user)
+        return f"{self.id} {self.job.guid} {self.bug_id} {self.user}"
 
 
 class JobNote(models.Model):
@@ -830,12 +856,12 @@ class JobNote(models.Model):
         been denormalised onto Job.
         """
         # update the job classification
-        note = JobNote.objects.filter(job=self.job).order_by('-created').first()
+        note = JobNote.objects.filter(job=self.job).order_by("-created").first()
         if note:
             self.job.failure_classification_id = note.failure_classification.id
         else:
             self.job.failure_classification_id = FailureClassification.objects.get(
-                name='not classified'
+                name="not classified"
             ).id
         self.job.save()
 
@@ -855,7 +881,7 @@ class JobNote(models.Model):
             return
 
         # if the failure type isn't intermittent, ignore
-        if self.failure_classification.name not in ["intermittent", "intermittent needs filing"]:
+        if self.failure_classification.name not in ["intermittent", "intermittent needs bugid"]:
             return
 
         # if the linked Job has more than one TextLogError, ignore
@@ -867,11 +893,11 @@ class JobNote(models.Model):
         existing_bugs = list(
             ClassifiedFailure.objects.filter(
                 error_matches__text_log_error=text_log_error
-            ).values_list('bug_number', flat=True)
+            ).values_list("bug_number", flat=True)
         )
 
         new_bugs = self.job.bugjobmap_set.exclude(bug_id__in=existing_bugs).values_list(
-            'bug_id', flat=True
+            "bug_id", flat=True
         )
 
         if not new_bugs:
@@ -897,55 +923,35 @@ class JobNote(models.Model):
         self._ensure_classification()
 
     def __str__(self):
-        return "{0} {1} {2} {3}".format(
-            self.id, self.job.guid, self.failure_classification, self.who
-        )
-
-    @classmethod
-    def create_autoclassify_job_note(self, job, user=None):
-        """
-        Create a JobNote, possibly via auto-classification.
-
-        Create mappings from the given Job to Bugs via verified Classifications
-        of this Job.
-
-        Also creates a JobNote.
-        """
-        # Only insert bugs for verified failures since these are automatically
-        # mirrored to ES and the mirroring can't be undone
-        # TODO: Decide whether this should change now that we're no longer mirroring.
-        bug_numbers = set(
-            ClassifiedFailure.objects.filter(
-                best_for_errors__text_log_error__job=job,
-                best_for_errors__best_is_verified=True,
-            )
-            .exclude(bug_number=None)
-            .exclude(bug_number=0)
-            .values_list('bug_number', flat=True)
-        )
-
-        existing_maps = set(BugJobMap.objects.filter(bug_id__in=bug_numbers).values_list('bug_id'))
-
-        for bug_number in bug_numbers - existing_maps:
-            BugJobMap.objects.create(job_id=job.id, bug_id=bug_number, user=user)
-
-        # if user is not specified, then this is an autoclassified job note and
-        # we should mark it as such
-        classification_name = 'intermittent' if user else 'autoclassified intermittent'
-        classification = FailureClassification.objects.get(name=classification_name)
-
-        return JobNote.objects.create(
-            job=job, failure_classification=classification, user=user, text=""
-        )
+        return f"{self.id} {self.job.guid} {self.failure_classification} {self.who}"
 
 
 class FailureLine(models.Model):
     # We make use of prefix indicies for several columns in this table which
     # can't be expressed in django syntax so are created with raw sql in migrations.
-    STATUS_LIST = ('PASS', 'FAIL', 'OK', 'ERROR', 'TIMEOUT', 'CRASH', 'ASSERT', 'SKIP', 'NOTRUN')
+    STATUS_LIST = (
+        "PASS",
+        "FAIL",
+        "OK",
+        "ERROR",
+        "TIMEOUT",
+        "CRASH",
+        "ASSERT",
+        "SKIP",
+        "NOTRUN",
+        "PRECONDITION_FAILED",
+    )
     # Truncated is a special action that we use to indicate that the list of failure lines
     # was truncated according to settings.FAILURE_LINES_CUTOFF.
-    ACTION_LIST = ("test_result", "log", "crash", "truncated", "group_result")
+    ACTION_LIST = (
+        "test_result",
+        "log",
+        "crash",
+        "truncated",
+        "group_result",
+        "test_status",
+        "test_end",
+    )
     LEVEL_LIST = ("critical", "error", "warning", "info", "debug")
 
     # Python 3's zip produces an iterable rather than a list, which Django's `choices` can't handle.
@@ -963,14 +969,15 @@ class FailureLine(models.Model):
     line = models.PositiveIntegerField()
     test = models.TextField(blank=True, null=True)
     subtest = models.TextField(blank=True, null=True)
-    status = models.CharField(max_length=7, choices=STATUS_CHOICES)
-    expected = models.CharField(max_length=7, choices=STATUS_CHOICES, blank=True, null=True)
+    status = models.CharField(max_length=19, choices=STATUS_CHOICES)
+    expected = models.CharField(max_length=19, choices=STATUS_CHOICES, blank=True, null=True)
     message = models.TextField(blank=True, null=True)
     signature = models.TextField(blank=True, null=True)
-    level = models.CharField(max_length=8, choices=STATUS_CHOICES, blank=True, null=True)
+    level = models.CharField(max_length=19, choices=STATUS_CHOICES, blank=True, null=True)
     stack = models.TextField(blank=True, null=True)
     stackwalk_stdout = models.TextField(blank=True, null=True)
     stackwalk_stderr = models.TextField(blank=True, null=True)
+    known_intermittent = models.JSONField(default=list)
 
     # Note that the case of best_classification = None and best_is_verified = True
     # has the special semantic that the line is ignored and should not be considered
@@ -989,18 +996,12 @@ class FailureLine(models.Model):
     modified = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'failure_line'
-        index_together = (
-            ('job_guid', 'repository'),
-            # Prefix index: test(50), subtest(25), status, expected, created
-            ('test', 'subtest', 'status', 'expected', 'created'),
-            # Prefix index: signature(25), test(50), created
-            ('signature', 'test', 'created'),
-        )
-        unique_together = ('job_log', 'line')
+        db_table = "failure_line"
+        indexes = [models.Index(fields=["job_guid", "repository"])]
+        unique_together = ("job_log", "line")
 
     def __str__(self):
-        return "{0} {1}".format(self.id, Job.objects.get(guid=self.job_guid).id)
+        return f"{self.id} {Job.objects.get(guid=self.job_guid).id}"
 
     @property
     def error(self):
@@ -1012,7 +1013,7 @@ class FailureLine(models.Model):
 
     def _serialized_components(self):
         if self.action == "test_result":
-            return ["TEST-UNEXPECTED-%s" % self.status.upper(), self.test]
+            return [f"TEST-UNEXPECTED-{self.status.upper()}", self.test]
         if self.action == "log":
             return [self.level.upper(), self.message.split("\n")[0]]
 
@@ -1047,26 +1048,26 @@ class FailureLine(models.Model):
             metadata = None
 
         return {
-            'id': self.id,
-            'job_guid': self.job_guid,
-            'repository': self.repository_id,
-            'job_log': self.job_log_id,
-            'action': self.action,
-            'line': self.line,
-            'test': self.test,
-            'subtest': self.subtest,
-            'status': self.status,
-            'expected': self.expected,
-            'message': self.message,
-            'signature': self.signature,
-            'level': self.level,
-            'stack': self.stack,
-            'stackwalk_stdout': self.stackwalk_stdout,
-            'stackwalk_stderr': self.stackwalk_stderr,
-            'best_classification': metadata.best_classification_id if metadata else None,
-            'best_is_verified': metadata.best_is_verified if metadata else False,
-            'created': self.created,
-            'modified': self.modified,
+            "id": self.id,
+            "job_guid": self.job_guid,
+            "repository": self.repository_id,
+            "job_log": self.job_log_id,
+            "action": self.action,
+            "line": self.line,
+            "test": self.test,
+            "subtest": self.subtest,
+            "status": self.status,
+            "expected": self.expected,
+            "message": self.message,
+            "signature": self.signature,
+            "level": self.level,
+            "stack": self.stack,
+            "stackwalk_stdout": self.stackwalk_stdout,
+            "stackwalk_stderr": self.stackwalk_stderr,
+            "best_classification": metadata.best_classification_id if metadata else None,
+            "best_is_verified": metadata.best_is_verified if metadata else False,
+            "created": self.created,
+            "modified": self.modified,
         }
 
     def to_mozlog_format(self):
@@ -1105,13 +1106,13 @@ class Group(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     name = models.CharField(max_length=255, unique=True)
-    job_logs = models.ManyToManyField("JobLog", through='GroupStatus', related_name='groups')
+    job_logs = models.ManyToManyField("JobLog", through="GroupStatus", related_name="groups")
 
     def __str__(self):
         return self.name
 
     class Meta:
-        db_table = 'group'
+        db_table = "group"
 
 
 class GroupStatus(models.Model):
@@ -1125,6 +1126,7 @@ class GroupStatus(models.Model):
     status = models.SmallIntegerField()
     job_log = models.ForeignKey(JobLog, on_delete=models.CASCADE, related_name="group_result")
     group = models.ForeignKey(Group, on_delete=models.CASCADE, related_name="group_result")
+    duration = models.SmallIntegerField()
 
     @staticmethod
     def get_status(status_str):
@@ -1135,7 +1137,7 @@ class GroupStatus(models.Model):
         )
 
     class Meta:
-        db_table = 'group_status'
+        db_table = "group_status"
 
 
 class ClassifiedFailure(models.Model):
@@ -1147,21 +1149,21 @@ class ClassifiedFailure(models.Model):
 
     id = models.BigAutoField(primary_key=True)
     text_log_errors = models.ManyToManyField(
-        "TextLogError", through='TextLogErrorMatch', related_name='classified_failures'
+        "TextLogError", through="TextLogErrorMatch", related_name="classified_failures"
     )
     # Note that we use a bug number of 0 as a sentinel value to indicate lines that
-    # are not actually symptomatic of a real bug, but are still possible to autoclassify
+    # are not actually symptomatic of a real bug
     bug_number = models.PositiveIntegerField(blank=True, null=True, unique=True)
     created = models.DateTimeField(auto_now_add=True)
     modified = models.DateTimeField(auto_now=True)
 
     def __str__(self):
-        return "{0} {1}".format(self.id, self.bug_number)
+        return f"{self.id} {self.bug_number}"
 
     def bug(self):
         # Putting this here forces one query per object; there should be a way
         # to make things more efficient
-        return Bugscache.objects.filter(id=self.bug_number).first()
+        return Bugscache.objects.filter(bugzilla_id=self.bug_number).first()
 
     def set_bug(self, bug_number):
         """
@@ -1176,7 +1178,7 @@ class ClassifiedFailure(models.Model):
         other = ClassifiedFailure.objects.filter(bug_number=bug_number).first()
         if not other:
             self.bug_number = bug_number
-            self.save(update_fields=['bug_number'])
+            self.save(update_fields=["bug_number"])
             return self
 
         self.replace_with(other)
@@ -1217,7 +1219,7 @@ class ClassifiedFailure(models.Model):
 
             if not other_matches:
                 match.classified_failure = other
-                match.save(update_fields=['classified_failure'])
+                match.save(update_fields=["classified_failure"])
                 continue
 
             # if any of our matches have higher scores than other's matches,
@@ -1227,53 +1229,7 @@ class ClassifiedFailure(models.Model):
             yield match.id  # for deletion
 
     class Meta:
-        db_table = 'classified_failure'
-
-
-# TODO delete table once backfill of jobs in TextLogError table has been completed
-class TextLogStep(models.Model):
-    """
-    An individual step in the textual (unstructured) log
-    """
-
-    id = models.BigAutoField(primary_key=True)
-
-    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="text_log_step")
-
-    # these are presently based off of buildbot results
-    # (and duplicated in treeherder/etl/buildbot.py)
-    SUCCESS = 0
-    TEST_FAILED = 1
-    BUSTED = 2
-    SKIPPED = 3
-    EXCEPTION = 4
-    RETRY = 5
-    USERCANCEL = 6
-    UNKNOWN = 7
-    SUPERSEDED = 8
-
-    RESULTS = (
-        (SUCCESS, 'success'),
-        (TEST_FAILED, 'testfailed'),
-        (BUSTED, 'busted'),
-        (SKIPPED, 'skipped'),
-        (EXCEPTION, 'exception'),
-        (RETRY, 'retry'),
-        (USERCANCEL, 'usercancel'),
-        (UNKNOWN, 'unknown'),
-        (SUPERSEDED, 'superseded'),
-    )
-
-    name = models.CharField(max_length=200)
-    started = models.DateTimeField(null=True)
-    finished = models.DateTimeField(null=True)
-    started_line_number = models.PositiveIntegerField()
-    finished_line_number = models.PositiveIntegerField()
-    result = models.IntegerField(choices=RESULTS)
-
-    class Meta:
-        db_table = "text_log_step"
-        unique_together = ('job', 'started_line_number', 'finished_line_number')
+        db_table = "classified_failure"
 
 
 class TextLogError(models.Model):
@@ -1282,21 +1238,17 @@ class TextLogError(models.Model):
     """
 
     id = models.BigAutoField(primary_key=True)
-    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name='text_log_error', null=True)
+    job = models.ForeignKey(Job, on_delete=models.CASCADE, related_name="text_log_error", null=True)
     line = models.TextField()
     line_number = models.PositiveIntegerField()
-
-    # TODO delete this field and unique_together once backfill of jobs in TextLogError table has been completed
-    step = models.ForeignKey(
-        TextLogStep, on_delete=models.CASCADE, related_name='errors', null=True
-    )
+    new_failure = models.BooleanField(default=False)
 
     class Meta:
         db_table = "text_log_error"
-        unique_together = ('step', 'line_number')
+        unique_together = ("job", "line_number")
 
     def __str__(self):
-        return "{0} {1}".format(self.id, self.job.id)
+        return f"{self.id} {self.job.id}"
 
     @property
     def metadata(self):
@@ -1308,7 +1260,9 @@ class TextLogError(models.Model):
     def bug_suggestions(self):
         from treeherder.model import error_summary
 
-        return error_summary.bug_suggestions_line(self)
+        return error_summary.bug_suggestions_line(
+            self, self.job.repository, revision=self.job.push.revision
+        )
 
     def create_match(self, matcher_name, classification):
         """
@@ -1347,7 +1301,7 @@ class TextLogError(models.Model):
         else:
             self.metadata.best_classification = classification
             self.metadata.best_is_verified = True
-            self.metadata.save(update_fields=['best_classification', 'best_is_verified'])
+            self.metadata.save(update_fields=["best_classification", "best_is_verified"])
 
         # Send event to NewRelic when a verifing an autoclassified failure.
         match = self.matches.filter(classified_failure=classification).first()
@@ -1355,10 +1309,10 @@ class TextLogError(models.Model):
             return
 
         newrelic.agent.record_custom_event(
-            'user_verified_classification',
+            "user_verified_classification",
             {
-                'matcher': match.matcher_name,
-                'job_id': self.id,
+                "matcher": match.matcher_name,
+                "job_id": self.id,
             },
         )
 
@@ -1400,7 +1354,7 @@ class TextLogErrorMetadata(models.Model):
 
     def __str__(self):
         args = (self.text_log_error_id, self.failure_line_id)
-        return 'TextLogError={} FailureLine={}'.format(*args)
+        return "TextLogError={} FailureLine={}".format(*args)
 
 
 class TextLogErrorMatch(models.Model):
@@ -1420,12 +1374,12 @@ class TextLogErrorMatch(models.Model):
     score = models.DecimalField(max_digits=3, decimal_places=2, blank=True, null=True)
 
     class Meta:
-        db_table = 'text_log_error_match'
-        verbose_name_plural = 'text log error matches'
-        unique_together = ('text_log_error', 'classified_failure', 'matcher_name')
+        db_table = "text_log_error_match"
+        verbose_name_plural = "text log error matches"
+        unique_together = ("text_log_error", "classified_failure", "matcher_name")
 
     def __str__(self):
-        return "{0} {1}".format(self.text_log_error.id, self.classified_failure.id)
+        return f"{self.text_log_error.id} {self.classified_failure.id}"
 
 
 class InvestigatedTests(models.Model):
@@ -1439,4 +1393,29 @@ class InvestigatedTests(models.Model):
 
     class Meta:
         unique_together = ["job_type", "test", "push"]
-        db_table = 'investigated_tests'
+        db_table = "investigated_tests"
+
+
+class MozciClassification(models.Model):
+    """
+    Automated classification of a Push provided by mozci
+    """
+
+    BAD = "BAD"
+    GOOD = "GOOD"
+    UNKNOWN = "UNKNOWN"
+
+    CLASSIFICATION_RESULT = (
+        (BAD, "bad"),
+        (GOOD, "good"),
+        (UNKNOWN, "unknown"),
+    )
+
+    id = models.BigAutoField(primary_key=True)
+    push = models.ForeignKey(Push, on_delete=models.CASCADE)
+    result = models.CharField(max_length=7, choices=CLASSIFICATION_RESULT)
+    created = models.DateTimeField(default=timezone.now)
+    task_id = models.CharField(max_length=22, validators=[MinLengthValidator(22)])
+
+    class Meta:
+        db_table = "mozci_classification"

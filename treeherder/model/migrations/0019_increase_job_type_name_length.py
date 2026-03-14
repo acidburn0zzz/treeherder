@@ -4,14 +4,15 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
-
     dependencies = [
         ('model', '0018_delete_jobdetail'),
     ]
 
     operations = [
         migrations.AlterField(
-            model_name='jobtype', name='name', field=models.CharField(max_length=140),
+            model_name='jobtype',
+            name='name',
+            field=models.CharField(max_length=140),
         ),
         migrations.AlterField(
             model_name='referencedatasignatures',

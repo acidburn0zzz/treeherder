@@ -1,10 +1,18 @@
-import datetime
+import uuid
+from datetime import datetime, timedelta
 
 import pytest
 from django.urls import reverse
 
+from tests.conftest import create_perf_alert
 from treeherder.model.models import Push
-from treeherder.perf.models import PerformanceAlertSummary, PerformanceAlert
+from treeherder.perf.models import (
+    PerformanceAlert,
+    PerformanceAlertSummary,
+    PerformanceFramework,
+)
+
+pytestmark = pytest.mark.perf
 
 
 @pytest.fixture
@@ -29,9 +37,9 @@ def test_perf_alert_summary_onhold(test_repository_onhold, test_perf_framework):
     for i in range(2):
         Push.objects.create(
             repository=test_repository_onhold,
-            revision='1234abcd{}'.format(i),
-            author='foo@bar.com',
-            time=datetime.datetime.now(),
+            revision=f"1234abcd{i}",
+            author="foo@bar.com",
+            time=datetime.now(),
         )
 
     return PerformanceAlertSummary.objects.create(
@@ -40,176 +48,317 @@ def test_perf_alert_summary_onhold(test_repository_onhold, test_perf_framework):
         prev_push_id=1,
         push_id=2,
         manually_created=False,
-        created=datetime.datetime.now(),
+        created=datetime.now(),
     )
 
 
 @pytest.fixture
-def test_perf_alert_onhold(test_perf_signature, test_perf_alert_summary_onhold):
-    from treeherder.perf.models import PerformanceAlert
-
-    return PerformanceAlert.objects.create(
-        summary=test_perf_alert_summary_onhold,
-        series_signature=test_perf_signature,
-        is_regression=True,
-        amount_pct=0.5,
-        amount_abs=50.0,
-        prev_value=100.0,
-        new_value=150.0,
-        t_value=20.0,
+def test_perf_alert_onhold(test_perf_signature, test_perf_alert_summary_onhold) -> PerformanceAlert:
+    return create_perf_alert(
+        summary=test_perf_alert_summary_onhold, series_signature=test_perf_signature
     )
 
 
-def test_alert_summaries_get(client, test_perf_alert_summary, test_perf_alert):
+def test_alert_summaries_get(
+    client,
+    test_perf_alert_summary,
+    test_perf_alert_with_tcmetadata,
+    test_perf_datum,
+    test_perf_datum_2,
+):
     # verify that we get the performance summary + alert on GET
-    resp = client.get(reverse('performance-alert-summaries-list'))
+    resp = client.get(reverse("performance-alert-summaries-list"))
     assert resp.status_code == 200
 
     # should just have the one alert summary (with one alert)
-    assert resp.json()['next'] is None
-    assert resp.json()['previous'] is None
-    assert len(resp.json()['results']) == 1
-    assert set(resp.json()['results'][0].keys()) == set(
-        [
-            'alerts',
-            'bug_number',
-            'bug_updated',
-            'issue_tracker',
-            'notes',
-            'assignee_username',
-            'assignee_email',
-            'framework',
-            'id',
-            'created',
-            'prev_push_id',
-            'related_alerts',
-            'repository',
-            'push_id',
-            'status',
-            'revision',
-            'push_timestamp',
-            'prev_push_revision',
-            'performance_tags',
-        ]
+    assert resp.json()["next"] is None
+    assert resp.json()["previous"] is None
+    assert len(resp.json()["results"]) == 1
+    assert set(resp.json()["results"][0].keys()) == {
+        "alerts",
+        "bug_number",
+        "bug_updated",
+        "bug_due_date",
+        "issue_tracker",
+        "notes",
+        "assignee_username",
+        "assignee_email",
+        "framework",
+        "id",
+        "created",
+        "first_triaged",
+        "triage_due_date",
+        "prev_push_id",
+        "related_alerts",
+        "repository",
+        "push_id",
+        "original_revision",
+        "status",
+        "revision",
+        "push_timestamp",
+        "prev_push_revision",
+        "original_prev_push_revision",
+        "performance_tags",
+        "duplicated_summaries",
+    }
+    assert len(resp.json()["results"][0]["alerts"]) == 1
+    assert set(resp.json()["results"][0]["alerts"][0].keys()) == {
+        "id",
+        "status",
+        "series_signature",
+        "taskcluster_metadata",
+        "prev_taskcluster_metadata",
+        "profile_url",
+        "prev_profile_url",
+        "is_regression",
+        "starred",
+        "manually_created",
+        "prev_value",
+        "new_value",
+        "t_value",
+        "amount_abs",
+        "amount_pct",
+        "summary_id",
+        "related_summary_id",
+        "classifier",
+        "classifier_email",
+        "backfill_record",
+        "noise_profile",
+    }
+    assert resp.json()["results"][0]["related_alerts"] == []
+    assert set(resp.json()["results"][0]["alerts"][0]["taskcluster_metadata"].keys()) == {
+        "task_id",
+        "retry_id",
+    }
+    assert set(resp.json()["results"][0]["alerts"][0]["prev_taskcluster_metadata"].keys()) == {
+        "task_id",
+        "retry_id",
+    }
+
+
+def test_alert_summaries_get_multiple_alerts(
+    client,
+    test_perf_alert_summary,
+    test_perf_alert_summary_2,
+    test_perf_alert_2,
+    test_perf_alert_3,
+    test_perf_alert_4,
+):
+    # verify that we get the performance summary + alert on GET
+    resp = client.get(reverse("performance-alert-summaries-list"))
+    assert resp.status_code == 200
+
+    # make sure only 2 alert summaries are returned when one summary
+    # has multiple alerts associated with it
+    data = resp.json()
+    assert len(data["results"]) == 2
+
+    # make sure the 2 alert summaries are unique
+    assert len(set([result["id"] for result in data["results"]])) == 2
+
+
+def test_alert_summaries_sheriffed_frameworks(
+    client, test_perf_alert_summary, test_perf_alert_summary_2, test_perf_framework
+):
+    # verify that we return only the sheriffed framework alerts if show_sheriffed_frameworks is True
+    sheriffed_framework = PerformanceFramework.objects.create(name="browsertime", enabled=True)
+    non_sheriffed_framework = PerformanceFramework.objects.create(
+        name="platform_microbench", enabled=True
     )
-    assert len(resp.json()['results'][0]['alerts']) == 1
-    assert set(resp.json()['results'][0]['alerts'][0].keys()) == set(
-        [
-            'id',
-            'status',
-            'series_signature',
-            'is_regression',
-            'starred',
-            'manually_created',
-            'prev_value',
-            'new_value',
-            't_value',
-            'amount_abs',
-            'amount_pct',
-            'summary_id',
-            'related_summary_id',
-            'classifier',
-            'classifier_email',
-            'backfill_record',
-        ]
+    test_perf_alert_summary.framework = sheriffed_framework
+    test_perf_alert_summary.save()
+    test_perf_alert_summary_2.framework = non_sheriffed_framework
+    test_perf_alert_summary_2.save()
+    resp = client.get(
+        reverse("performance-alert-summaries-list"), {"show_sheriffed_frameworks": True}
     )
-    assert resp.json()['results'][0]['related_alerts'] == []
+    assert resp.status_code == 200
+    # Should only include the sheriffed alert (browsertime)
+    assert len(resp.json()["results"]) == 1
+    assert resp.json()["results"][0]["framework"] == sheriffed_framework.id
+    test_perf_alert_summary.framework = test_perf_framework
+    test_perf_alert_summary.save()
+    resp = client.get(
+        reverse("performance-alert-summaries-list"), {"show_sheriffed_frameworks": True}
+    )
+    assert resp.status_code == 200
+    # Should return no results, since test_talos is not a sheriffed framework
+    assert len(resp.json()["results"]) == 0
 
 
 def test_alert_summaries_get_onhold(
     client,
     test_perf_alert_summary,
-    test_perf_alert,
+    test_perf_alert_with_tcmetadata,
+    test_perf_datum,
+    test_perf_datum_2,
     test_perf_alert_summary_onhold,
     test_perf_alert_onhold,
     test_repository_onhold,
 ):
     # verify that we get the performance summary + alert on GET
-    resp = client.get(reverse('performance-alert-summaries-list'))
+    resp = client.get(reverse("performance-alert-summaries-list"))
     assert resp.status_code == 200
 
     # should just have the one alert summary (with one alert)
-    assert resp.json()['next'] is None
-    assert resp.json()['previous'] is None
-    assert len(resp.json()['results']) == 1
-    assert set(resp.json()['results'][0].keys()) == set(
-        [
-            'alerts',
-            'bug_number',
-            'bug_updated',
-            'issue_tracker',
-            'notes',
-            'assignee_username',
-            'assignee_email',
-            'framework',
-            'id',
-            'created',
-            'prev_push_id',
-            'related_alerts',
-            'repository',
-            'push_id',
-            'status',
-            'revision',
-            'push_timestamp',
-            'prev_push_revision',
-            'performance_tags',
-        ]
-    )
-    assert len(resp.json()['results'][0]['alerts']) == 1
-    assert set(resp.json()['results'][0]['alerts'][0].keys()) == set(
-        [
-            'id',
-            'status',
-            'series_signature',
-            'is_regression',
-            'starred',
-            'manually_created',
-            'prev_value',
-            'new_value',
-            't_value',
-            'amount_abs',
-            'amount_pct',
-            'summary_id',
-            'related_summary_id',
-            'classifier',
-            'classifier_email',
-            'backfill_record',
-        ]
-    )
-    assert resp.json()['results'][0]['related_alerts'] == []
+    assert resp.json()["next"] is None
+    assert resp.json()["previous"] is None
+    assert len(resp.json()["results"]) == 1
+    assert set(resp.json()["results"][0].keys()) == {
+        "alerts",
+        "bug_number",
+        "bug_updated",
+        "bug_due_date",
+        "issue_tracker",
+        "notes",
+        "assignee_username",
+        "assignee_email",
+        "framework",
+        "id",
+        "created",
+        "first_triaged",
+        "triage_due_date",
+        "prev_push_id",
+        "related_alerts",
+        "repository",
+        "push_id",
+        "original_revision",
+        "status",
+        "revision",
+        "push_timestamp",
+        "prev_push_revision",
+        "original_prev_push_revision",
+        "performance_tags",
+        "duplicated_summaries",
+    }
+    assert len(resp.json()["results"][0]["alerts"]) == 1
+    assert set(resp.json()["results"][0]["alerts"][0].keys()) == {
+        "id",
+        "status",
+        "series_signature",
+        "taskcluster_metadata",
+        "prev_taskcluster_metadata",
+        "profile_url",
+        "prev_profile_url",
+        "is_regression",
+        "starred",
+        "manually_created",
+        "prev_value",
+        "new_value",
+        "t_value",
+        "amount_abs",
+        "amount_pct",
+        "summary_id",
+        "related_summary_id",
+        "classifier",
+        "classifier_email",
+        "backfill_record",
+        "noise_profile",
+    }
+    assert resp.json()["results"][0]["related_alerts"] == []
+    assert set(resp.json()["results"][0]["alerts"][0]["taskcluster_metadata"].keys()) == {
+        "task_id",
+        "retry_id",
+    }
+    assert set(resp.json()["results"][0]["alerts"][0]["prev_taskcluster_metadata"].keys()) == {
+        "task_id",
+        "retry_id",
+    }
 
 
 def test_alert_summaries_put(
     client, test_repository, test_perf_signature, test_perf_alert_summary, test_user, test_sheriff
 ):
     # verify that we fail if not authenticated
-    resp = client.put(reverse('performance-alert-summaries-list') + '1/', {'status': 1})
+    resp = client.put(reverse("performance-alert-summaries-list") + "1/", {"status": 1})
     assert resp.status_code == 403
     assert PerformanceAlertSummary.objects.get(id=1).status == 0
 
     # verify that we fail if authenticated, but not staff
     client.force_authenticate(user=test_user)
-    resp = client.put(reverse('performance-alert-summaries-list') + '1/', {'status': 1})
+    resp = client.put(reverse("performance-alert-summaries-list") + "1/", {"status": 1})
     assert resp.status_code == 403
     assert PerformanceAlertSummary.objects.get(id=1).status == 0
 
     # verify that we succeed if authenticated + staff
     client.force_authenticate(user=test_sheriff)
-    resp = client.put(reverse('performance-alert-summaries-list') + '1/', {'status': 1})
+    resp = client.put(reverse("performance-alert-summaries-list") + "1/", {"status": 1})
     assert resp.status_code == 200
     assert PerformanceAlertSummary.objects.get(id=1).status == 1
 
     # verify we can set assignee
     client.force_authenticate(user=test_sheriff)
     resp = client.put(
-        reverse('performance-alert-summaries-list') + '1/',
-        {'assignee_username': test_user.username},
+        reverse("performance-alert-summaries-list") + "1/",
+        {"assignee_username": test_user.username},
     )
     assert resp.status_code == 200
     assert PerformanceAlertSummary.objects.get(id=1).assignee == test_user
 
 
-def test_alert_summary_post(
+def test_performance_alert_summary_change_from_revision(
+    client, test_perf_alert_summary, test_sheriff, test_push
+):
+    client.force_authenticate(user=test_sheriff)
+
+    # verify we can set revision
+    assert PerformanceAlertSummary.objects.get(id=1).prev_push.revision != test_push.revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"prev_push_revision": test_push.revision},
+    )
+    assert resp.status_code == 200
+    assert PerformanceAlertSummary.objects.get(id=1).prev_push.revision == test_push.revision
+
+    # verify we cannot set non-existing revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"prev_push_revision": "no-push-revision"},
+    )
+    assert resp.status_code == 400
+
+    # revert revision
+    original_revision = PerformanceAlertSummary.objects.get(id=1).original_prev_push.revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"prev_push_revision": original_revision},
+    )
+    assert resp.status_code == 200
+    assert PerformanceAlertSummary.objects.get(id=1).prev_push.revision == original_revision
+
+
+def test_performance_alert_summary_change_revision(
+    client, test_perf_alert_summary, test_sheriff, test_push
+):
+    client.force_authenticate(user=test_sheriff)
+
+    # verify we can set revision
+    assert PerformanceAlertSummary.objects.get(id=1).push.revision != test_push.revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"revision": test_push.revision},
+    )
+    assert resp.status_code == 200
+    assert PerformanceAlertSummary.objects.get(id=1).push.revision == test_push.revision
+
+    # verify we cannot set non-existing revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"revision": "no-push-revision"},
+    )
+    assert resp.status_code == 400
+
+    # revert revision
+    original_revision = PerformanceAlertSummary.objects.get(id=1).original_push.revision
+    resp = client.put(
+        reverse("performance-alert-summaries-list") + "1/",
+        {"revision": original_revision},
+    )
+    assert resp.status_code == 200
+    assert PerformanceAlertSummary.objects.get(id=1).push.revision == original_revision
+
+
+def test_auth_for_alert_summary_post(
     client,
     test_repository,
     test_issue_tracker,
@@ -218,48 +367,86 @@ def test_alert_summary_post(
     test_user,
     test_sheriff,
 ):
-    # this blob should be sufficient to create a new alert summary (assuming
-    # the user of this API is authorized to do so!)
     post_blob = {
-        'repository_id': test_repository.id,
-        'framework_id': test_perf_signature.framework.id,
-        'prev_push_id': 1,
-        'push_id': 2,
+        "repository_id": test_repository.id,
+        "framework_id": test_perf_signature.framework.id,
+        "prev_push_id": 1,
+        "push_id": 2,
     }
 
     # verify that we fail if not authenticated
-    resp = client.post(reverse('performance-alert-summaries-list'), post_blob)
+    resp = client.post(reverse("performance-alert-summaries-list"), post_blob)
     assert resp.status_code == 403
     assert PerformanceAlertSummary.objects.count() == 0
 
     # verify that we fail if authenticated, but not staff
     client.force_authenticate(user=test_user)
-    resp = client.post(reverse('performance-alert-summaries-list'), post_blob)
+    resp = client.post(reverse("performance-alert-summaries-list"), post_blob)
     assert resp.status_code == 403
     assert PerformanceAlertSummary.objects.count() == 0
 
+
+def test_alert_summary_post(
+    authorized_sheriff_client,
+    test_repository,
+    test_issue_tracker,
+    push_stored,
+    test_perf_signature,
+    test_user,
+    test_sheriff,
+):
+    post_blob = {
+        "repository_id": test_repository.id,
+        "framework_id": test_perf_signature.framework.id,
+        "prev_push_id": 1,
+        "push_id": 2,
+    }
+
     # verify that we succeed if authenticated + staff
-    client.force_authenticate(user=test_sheriff)
-    resp = client.post(reverse('performance-alert-summaries-list'), post_blob)
+    resp = authorized_sheriff_client.post(reverse("performance-alert-summaries-list"), post_blob)
     assert resp.status_code == 200
 
     assert PerformanceAlertSummary.objects.count() == 1
     alert_summary = PerformanceAlertSummary.objects.first()
     assert alert_summary.repository == test_repository
     assert alert_summary.framework == test_perf_signature.framework
-    assert alert_summary.prev_push_id == post_blob['prev_push_id']
-    assert alert_summary.push_id == post_blob['push_id']
-    assert resp.data['alert_summary_id'] == alert_summary.id
+    assert alert_summary.prev_push_id == post_blob["prev_push_id"]
+    assert alert_summary.push_id == post_blob["push_id"]
+    assert resp.data["alert_summary_id"] == alert_summary.id
 
     # verify that we don't create a new performance alert summary if one
     # already exists (but also don't throw an error)
-    resp = client.post(reverse('performance-alert-summaries-list'), post_blob)
+    resp = authorized_sheriff_client.post(reverse("performance-alert-summaries-list"), post_blob)
     assert resp.status_code == 200
     assert PerformanceAlertSummary.objects.count() == 1
 
 
+def test_push_range_validation_for_alert_summary_post(
+    authorized_sheriff_client,
+    test_repository,
+    test_issue_tracker,
+    push_stored,
+    test_perf_signature,
+    test_user,
+    test_sheriff,
+):
+    identical_push = 1
+    post_blob = {
+        "repository_id": test_repository.id,
+        "framework_id": test_perf_signature.framework.id,
+        "prev_push_id": identical_push,
+        "push_id": identical_push,
+    }
+
+    # verify that we succeed if authenticated + staff
+    resp = authorized_sheriff_client.post(reverse("performance-alert-summaries-list"), post_blob)
+    assert resp.status_code == 400
+
+    assert PerformanceAlertSummary.objects.count() == 0
+
+
 @pytest.mark.parametrize(
-    'modification', [{'notes': 'human created notes'}, {'bug_number': 123456, 'issue_tracker': 1}]
+    "modification", [{"notes": "human created notes"}, {"bug_number": 123456, "issue_tracker": 1}]
 )
 def test_alert_summary_timestamps_via_endpoints(
     authorized_sheriff_client, test_perf_alert_summary, modification
@@ -268,7 +455,7 @@ def test_alert_summary_timestamps_via_endpoints(
 
     # when editing notes & linking bugs
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/', modification
+        reverse("performance-alert-summaries-list") + "1/", modification
     )
     assert resp.status_code == 200
     test_perf_alert_summary.refresh_from_db()
@@ -287,7 +474,7 @@ def test_bug_number_and_timestamp_on_setting_value(
 
     # link a bug
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/', {'bug_number': 123456}
+        reverse("performance-alert-summaries-list") + "1/", {"bug_number": 123456}
     )
     assert resp.status_code == 200
     test_perf_alert_summary.refresh_from_db()
@@ -301,13 +488,13 @@ def test_bug_number_and_timestamp_on_overriding(
     authorized_sheriff_client, test_perf_alert_summary_with_bug
 ):
     assert test_perf_alert_summary_with_bug.bug_number == 123456
-    assert test_perf_alert_summary_with_bug.bug_updated < datetime.datetime.now()
+    assert test_perf_alert_summary_with_bug.bug_updated < datetime.now()
 
     bug_linking_time = test_perf_alert_summary_with_bug.bug_updated
 
     # update the existing bug number
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/', {'bug_number': 987654}
+        reverse("performance-alert-summaries-list") + "1/", {"bug_number": 987654}
     )
 
     assert resp.status_code == 200
@@ -326,7 +513,7 @@ def test_bug_number_and_timestamp_dont_update_from_other_modifications(
 
     # link a bug
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/', {'notes': 'human created notes'}
+        reverse("performance-alert-summaries-list") + "1/", {"notes": "human created notes"}
     )
     assert resp.status_code == 200
     test_perf_alert_summary.refresh_from_db()
@@ -339,12 +526,11 @@ def test_bug_number_and_timestamp_dont_update_from_other_modifications(
 def test_add_multiple_tags_to_alert_summary(
     authorized_sheriff_client, test_perf_alert_summary, test_perf_tag, test_perf_tag_2
 ):
-
     assert test_perf_alert_summary.performance_tags.count() == 1
 
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/',
-        {'performance_tags': [test_perf_tag.name, test_perf_tag_2.name]},
+        reverse("performance-alert-summaries-list") + "1/",
+        {"performance_tags": [test_perf_tag.name, test_perf_tag_2.name]},
     )
     assert resp.status_code == 200
     test_perf_alert_summary.refresh_from_db()
@@ -356,7 +542,7 @@ def test_remove_a_tag_from_a_summary(authorized_sheriff_client, test_perf_alert_
     assert test_perf_alert_summary.performance_tags.count() == 1
 
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/', {'performance_tags': []}
+        reverse("performance-alert-summaries-list") + "1/", {"performance_tags": []}
     )
     assert resp.status_code == 200
     test_perf_alert_summary.refresh_from_db()
@@ -364,14 +550,14 @@ def test_remove_a_tag_from_a_summary(authorized_sheriff_client, test_perf_alert_
     assert test_perf_alert_summary.performance_tags.count() == 0
 
 
-def test_cannot_add_unregistred_tag_to_a_summary(
+def test_cannot_add_unregistered_tag_to_a_summary(
     authorized_sheriff_client, test_perf_alert_summary
 ):
     assert test_perf_alert_summary.performance_tags.count() == 1
 
     resp = authorized_sheriff_client.put(
-        reverse('performance-alert-summaries-list') + '1/',
-        {'performance_tags': ['unregistered-tag']},
+        reverse("performance-alert-summaries-list") + "1/",
+        {"performance_tags": ["unregistered-tag"]},
     )
     assert resp.status_code == 400
     test_perf_alert_summary.refresh_from_db()
@@ -379,25 +565,122 @@ def test_cannot_add_unregistred_tag_to_a_summary(
     assert test_perf_alert_summary.performance_tags.count() == 1
 
 
+def test_timerange_with_summary_outside_range(
+    client, create_push, test_repository, test_perf_alert_summary, test_perf_alert_summary_2
+):
+    # 30 days timerange
+    timerange_to_test = 30 * 24 * 60 * 60
+    past_date = datetime.now() - timedelta(weeks=9)
+
+    test_perf_alert_summary.push = create_push(
+        test_repository, revision=uuid.uuid4(), time=past_date
+    )
+    test_perf_alert_summary.save()
+    test_perf_alert_summary_2.push.time = datetime.now()
+    test_perf_alert_summary_2.push.save()
+
+    resp = client.get(
+        reverse("performance-alert-summaries-list"),
+        data={
+            "framework": 1,
+            "timerange": timerange_to_test,
+        },
+    )
+
+    assert resp.status_code == 200
+
+    retrieved_summaries = resp.json()["results"]
+    summary_ids = [summary["id"] for summary in retrieved_summaries]
+
+    assert test_perf_alert_summary_2.id in summary_ids
+    assert len(summary_ids) == 1
+
+
+def test_timerange_with_all_summaries_in_range(
+    client, create_push, test_repository, test_perf_alert_summary, test_perf_alert_summary_2
+):
+    # 7 days timerange
+    timerange_to_test = 7 * 24 * 60 * 60
+    past_date = datetime.now() - timedelta(days=2)
+
+    test_perf_alert_summary.push = create_push(
+        test_repository, revision=uuid.uuid4(), time=past_date
+    )
+    test_perf_alert_summary.save()
+    test_perf_alert_summary_2.push.time = datetime.now()
+    test_perf_alert_summary_2.push.save()
+
+    resp = client.get(
+        reverse("performance-alert-summaries-list"),
+        data={
+            "framework": 1,
+            "timerange": timerange_to_test,
+        },
+    )
+    assert resp.status_code == 200
+
+    retrieved_summaries = resp.json()["results"]
+    summary_ids = [summary["id"] for summary in retrieved_summaries]
+
+    assert test_perf_alert_summary.id in summary_ids
+    assert test_perf_alert_summary_2.id in summary_ids
+    assert len(summary_ids) == 2
+
+
+def test_pagesize_is_limited_from_params(
+    client, test_perf_alert_summary, test_perf_alert_summary_2
+):
+    resp = client.get(
+        reverse("performance-alert-summaries-list"),
+        data={
+            "framework": 1,
+            "limit": 1,
+        },
+    )
+    assert resp.status_code == 200
+
+    retrieved_summaries = resp.json()["results"]
+    summary_ids = [summary["id"] for summary in retrieved_summaries]
+
+    assert test_perf_alert_summary_2.id in summary_ids
+    assert len(summary_ids) == 1
+
+
+def test_pagesize_with_limit_higher_than_total_summaries(
+    client, test_perf_alert_summary, test_perf_alert_summary_2
+):
+    resp = client.get(
+        reverse("performance-alert-summaries-list"),
+        data={
+            "framework": 1,
+            "limit": 5,
+        },
+    )
+    assert resp.status_code == 200
+    resp_json = resp.json()
+    assert resp_json["next"] is None
+    assert resp_json["previous"] is None
+    retrieved_summaries = resp_json["results"]
+    summary_ids = [summary["id"] for summary in retrieved_summaries]
+
+    assert test_perf_alert_summary.id in summary_ids
+    assert test_perf_alert_summary_2.id in summary_ids
+    assert len(summary_ids) == 2
+
+
 @pytest.fixture
 def related_alert(test_perf_alert_summary, test_perf_alert_summary_2, test_perf_signature_2):
-    return PerformanceAlert.objects.create(
+    return create_perf_alert(
         summary=test_perf_alert_summary_2,
-        related_summary=test_perf_alert_summary,
         series_signature=test_perf_signature_2,
+        related_summary=test_perf_alert_summary,
         status=PerformanceAlert.REASSIGNED,
-        is_regression=True,
-        amount_pct=0.5,
-        amount_abs=50.0,
-        prev_value=100.0,
-        new_value=150.0,
-        t_value=20.0,
     )
 
 
 @pytest.mark.parametrize(
-    'text_to_filter',
-    ['mysuite2', 'mysuite2 mytest2', 'mytest2 win7', 'mysuite2 mytest2 win7 e10s opt'],
+    "text_to_filter",
+    ["mysuite2", "mysuite2 mytest2", "mytest2 win7", "mysuite2 mytest2 win7 e10s opt"],
 )
 def test_filter_text_accounts_for_related_alerts_also(
     text_to_filter, client, test_perf_alert_summary, test_perf_alert, related_alert
@@ -405,17 +688,17 @@ def test_filter_text_accounts_for_related_alerts_also(
     summary_id = test_perf_alert_summary.id
 
     resp = client.get(
-        reverse('performance-alert-summaries-list'),
+        reverse("performance-alert-summaries-list"),
         data={
-            'framework': 1,
-            'page': 1,
-            'filter_text': text_to_filter,
+            "framework": 1,
+            "page": 1,
+            "filter_text": text_to_filter,
         },  # excluded 'status' field to emulate 'all statuses'
     )
     assert resp.status_code == 200
 
-    retrieved_summaries = resp.json()['results']
-    summary_ids = [summary['id'] for summary in retrieved_summaries]
+    retrieved_summaries = resp.json()["results"]
+    summary_ids = [summary["id"] for summary in retrieved_summaries]
 
     assert summary_id in summary_ids
     # also ensure original & related summary are both fetched

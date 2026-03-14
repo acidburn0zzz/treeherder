@@ -10,16 +10,10 @@ import {
   Row,
   Collapse,
   ButtonGroup,
-  ButtonDropdown,
+  DropdownButton,
   Button,
-  DropdownMenu,
-  DropdownToggle,
-  DropdownItem,
-  Navbar,
-  Nav,
-  NavItem,
-  UncontrolledButtonDropdown,
-} from 'reactstrap';
+  Dropdown,
+} from 'react-bootstrap';
 import groupBy from 'lodash/groupBy';
 
 import JobModel from '../models/job';
@@ -29,10 +23,10 @@ import Action from './Action';
 class ClassificationGroup extends React.PureComponent {
   constructor(props) {
     super(props);
+    const { expanded = true } = props;
 
     this.state = {
-      detailsShowing: props.expanded,
-      retriggerDropdownOpen: false,
+      detailsShowing: expanded,
     };
   }
 
@@ -47,19 +41,13 @@ class ClassificationGroup extends React.PureComponent {
     }));
   };
 
-  toggleRetrigger = () => {
-    this.setState((prevState) => ({
-      retriggerDropdownOpen: !prevState.retriggerDropdownOpen,
-    }));
-  };
-
   retriggerAll = (times) => {
     const { tests, notify, currentRepo, jobs } = this.props;
     // Reduce down to the unique jobs
     const testJobs = tests.reduce(
       (acc, test) => ({
         ...acc,
-        ...jobs[test.jobName].reduce((fjAcc, job) => ({ [job.id]: job }), {}),
+        ...jobs[test.jobName].reduce((_fjAcc, job) => ({ [job.id]: job }), {}),
       }),
       {},
     );
@@ -70,34 +58,43 @@ class ClassificationGroup extends React.PureComponent {
 
   getTestsByAction = (tests) => {
     const { log, crash, test } = groupBy(tests, 'action');
+    const categories = [];
 
-    return {
-      'Test Failures': test || [],
-      'Crashes (unknown path)': [...(log || []), ...(crash || [])],
-    };
+    if (test) {
+      categories.push(['Test Failures', test]);
+    }
+
+    if (log || crash) {
+      categories.push([
+        'Crashes (unknown path)',
+        [...(log || []), ...(crash || [])],
+      ]);
+    }
+
+    return categories;
   };
 
   render() {
-    const { detailsShowing, retriggerDropdownOpen } = this.state;
+    const { detailsShowing } = this.state;
     const {
       jobs,
       tests,
       name,
       revision,
-      className,
-      hasRetriggerAll,
+      className = '',
+      hasRetriggerAll = false,
       notify,
       currentRepo,
       icon,
-      iconColor,
-      groupedBy,
-      orderedBy,
+      iconColor = 'darker-info',
+      groupedBy = 'path',
+      orderedBy = 'count',
       testGroup,
       selectedTest,
       selectedJobName,
       selectedTaskId,
-      setGroupedBy,
-      setOrderedBy,
+      setGroupedBy = () => {},
+      setOrderedBy = () => {},
       updateParamsAndState,
       investigateTest,
       unInvestigateTest,
@@ -112,163 +109,147 @@ class ClassificationGroup extends React.PureComponent {
 
     return (
       <Row
-        className={`justify-content-between ${className}`}
+        className={`justify-content-between ${className || ''}`}
         data-testid="classification-group"
       >
         <span className="font-size-24">
-          <FontAwesomeIcon
-            icon={expandIcon}
-            className="mr-1 min-width-1"
-            title={expandTitle}
-            aria-label={expandTitle}
-            alt=""
-          />
           <Button
             onClick={this.toggleDetails}
-            outline
+            variant="outline"
             className="font-size-24 border-0"
             role="button"
             aria-expanded={detailsShowing}
           >
-            <FontAwesomeIcon icon={icon} className={`mr-2 text-${iconColor}`} />
+            <FontAwesomeIcon
+              icon={expandIcon}
+              className="me-1 min-width-1"
+              title={expandTitle}
+              aria-label={expandTitle}
+              alt=""
+            />
+            <FontAwesomeIcon icon={icon} className={`me-2 text-${iconColor}`} />
             {name} ({groupLength})
           </Button>
         </span>
         {hasRetriggerAll && groupLength > 0 && detailsShowing && (
-          <Navbar className="mb-4">
-            <Nav>
-              <NavItem>
-                <ButtonGroup size="sm">
-                  <Button
-                    title="Retrigger all 'Need Investigation' jobs once"
-                    onClick={() => this.retriggerAll(1)}
-                    size="sm"
-                  >
-                    <FontAwesomeIcon
-                      icon={faRedo}
-                      title="Retrigger"
-                      className="mr-2"
-                      alt=""
-                    />
-                    Retrigger all
-                  </Button>
-                  <ButtonDropdown
-                    isOpen={retriggerDropdownOpen}
-                    toggle={this.toggleRetrigger}
-                    size="sm"
-                  >
-                    <DropdownToggle caret />
-                    <DropdownMenu>
-                      {[5, 10, 15].map((times) => (
-                        <DropdownItem
-                          key={times}
-                          title={`Retrigger all 'Need Investigation' jobs ${times} times`}
-                          onClick={() => this.retriggerAll(times)}
-                          className="pointable"
-                          tag="a"
-                        >
-                          Retrigger all {times} times
-                        </DropdownItem>
-                      ))}
-                    </DropdownMenu>
-                  </ButtonDropdown>
-                </ButtonGroup>
-              </NavItem>
-              <NavItem>
-                <UncontrolledButtonDropdown size="sm" className="ml-1">
-                  <DropdownToggle
-                    className="btn-sm ml-1 text-capitalize"
-                    id="groupTestsDropdown"
-                    caret
-                    outline
-                    data-testid="groupTestsDropdown"
-                  >
-                    Group By: {groupedBy}
-                  </DropdownToggle>
-                  <DropdownMenu toggler="groupTestsDropdown">
-                    <DropdownItem
+          <div className="mb-4 d-flex gap-2">
+            <ButtonGroup size="sm">
+              <Button
+                title="Retrigger all 'Need Investigation' jobs once"
+                onClick={() => this.retriggerAll(1)}
+                size="sm"
+                variant="secondary"
+              >
+                <FontAwesomeIcon
+                  icon={faRedo}
+                  title="Retrigger"
+                  className="me-2"
+                  alt=""
+                />
+                Retrigger all
+              </Button>
+              <Dropdown>
+                <Dropdown.Toggle
+                  split
+                  variant="secondary"
+                  size="sm"
+                  title="Retrigger all multiple times"
+                />
+                <Dropdown.Menu>
+                  {[5, 10, 15].map((times) => (
+                    <Dropdown.Item
+                      key={times}
+                      title={`Retrigger all 'Need Investigation' jobs ${times} times`}
+                      onClick={() => this.retriggerAll(times)}
                       className="pointable"
                       tag="a"
-                      onClick={() => setGroupedBy('none')}
                     >
-                      None
-                    </DropdownItem>
-                    <DropdownItem
-                      className="pointable"
-                      tag="a"
-                      onClick={() => {
-                        setGroupedBy('path');
-                      }}
-                    >
-                      Path
-                    </DropdownItem>
-                    <DropdownItem
-                      className="pointable"
-                      tag="a"
-                      onClick={() => setGroupedBy('platform')}
-                    >
-                      Platform
-                    </DropdownItem>
-                  </DropdownMenu>
-                </UncontrolledButtonDropdown>
-              </NavItem>
-              <NavItem>
-                <UncontrolledButtonDropdown size="sm" className="ml-1">
-                  <DropdownToggle
-                    className="btn-sm ml-1 text-capitalize"
-                    id="groupTestsDropdown"
-                    caret
-                    outline
-                  >
-                    Order By: {orderedBy}
-                  </DropdownToggle>
-                  <DropdownMenu toggler="groupTestsDropdown">
-                    <DropdownItem
-                      className="pointable"
-                      tag="a"
-                      onClick={() => {
-                        setOrderedBy('count');
-                      }}
-                    >
-                      Count
-                    </DropdownItem>
-                    <DropdownItem
-                      className="pointable"
-                      tag="a"
-                      onClick={() => {
-                        setOrderedBy('text');
-                      }}
-                    >
-                      Text
-                    </DropdownItem>
-                  </DropdownMenu>
-                </UncontrolledButtonDropdown>
-              </NavItem>
-            </Nav>
-          </Navbar>
+                      Retrigger all {times} times
+                    </Dropdown.Item>
+                  ))}
+                </Dropdown.Menu>
+              </Dropdown>
+            </ButtonGroup>
+            <DropdownButton
+              size="sm"
+              className="ms-1"
+              title={`Group By: ${groupedBy}`}
+              variant="outline-secondary"
+              id="groupTestsDropdown"
+              data-testid="groupTestsDropdown"
+            >
+              <Dropdown.Item
+                className="pointable"
+                onClick={() => setGroupedBy('none')}
+              >
+                None
+              </Dropdown.Item>
+              <Dropdown.Item
+                className="pointable"
+                onClick={() => {
+                  setGroupedBy('path');
+                }}
+              >
+                Path
+              </Dropdown.Item>
+              <Dropdown.Item
+                className="pointable"
+                onClick={() => setGroupedBy('platform')}
+              >
+                Platform
+              </Dropdown.Item>
+            </DropdownButton>
+            <DropdownButton
+              size="sm"
+              className="ms-1"
+              title={`Order By: ${orderedBy}`}
+              variant="outline-secondary"
+              id="orderTestsDropdown"
+            >
+              <Dropdown.Item
+                className="pointable"
+                onClick={() => {
+                  setOrderedBy('count');
+                }}
+              >
+                Count
+              </Dropdown.Item>
+              <Dropdown.Item
+                className="pointable"
+                onClick={() => {
+                  setOrderedBy('text');
+                }}
+              >
+                Text
+              </Dropdown.Item>
+            </DropdownButton>
+          </div>
         )}
-        <Collapse isOpen={detailsShowing} className="w-100">
-          {Object.entries(testsByAction).map(([key, value]) => (
-            <Action
-              name={key}
-              tests={value}
-              groupedBy={groupedBy}
-              orderedBy={orderedBy}
-              revision={revision}
-              currentRepo={currentRepo}
-              notify={notify}
-              key={key}
-              jobs={jobs}
-              testGroup={testGroup}
-              selectedTest={selectedTest}
-              selectedJobName={selectedJobName}
-              selectedTaskId={selectedTaskId}
-              updateParamsAndState={updateParamsAndState}
-              investigateTest={investigateTest}
-              unInvestigateTest={unInvestigateTest}
-              updatePushHealth={updatePushHealth}
-            />
-          ))}
+        <Collapse in={detailsShowing} className="w-100">
+          <div>
+            {testsByAction.length > 0 &&
+              testsByAction.map(([key, value]) => (
+                <Action
+                  name={key}
+                  tests={value}
+                  groupedBy={groupedBy}
+                  orderedBy={orderedBy}
+                  revision={revision}
+                  currentRepo={currentRepo}
+                  notify={notify}
+                  key={key}
+                  jobs={jobs}
+                  testGroup={testGroup}
+                  selectedTest={selectedTest}
+                  selectedJobName={selectedJobName}
+                  selectedTaskId={selectedTaskId}
+                  updateParamsAndState={updateParamsAndState}
+                  investigateTest={investigateTest}
+                  unInvestigateTest={unInvestigateTest}
+                  updatePushHealth={updatePushHealth}
+                />
+              ))}
+          </div>
         </Collapse>
       </Row>
     );
@@ -276,11 +257,12 @@ class ClassificationGroup extends React.PureComponent {
 }
 
 ClassificationGroup.propTypes = {
-  tests: PropTypes.arrayOf(PropTypes.object).isRequired,
+  tests: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   name: PropTypes.string.isRequired,
   currentRepo: PropTypes.shape({}).isRequired,
   revision: PropTypes.string.isRequired,
   notify: PropTypes.func.isRequired,
+  icon: PropTypes.shape({}).isRequired,
   hasRetriggerAll: PropTypes.bool,
   expanded: PropTypes.bool,
   className: PropTypes.string,
@@ -289,17 +271,6 @@ ClassificationGroup.propTypes = {
   groupedBy: PropTypes.string,
   setOrderedBy: PropTypes.func,
   setGroupedBy: PropTypes.func,
-};
-
-ClassificationGroup.defaultProps = {
-  expanded: true,
-  className: '',
-  iconColor: 'darker-info',
-  hasRetriggerAll: false,
-  orderedBy: 'count',
-  groupedBy: 'path',
-  setOrderedBy: () => {},
-  setGroupedBy: () => {},
 };
 
 export default ClassificationGroup;

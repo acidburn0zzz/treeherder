@@ -1,16 +1,20 @@
-/* eslint-disable react/no-did-update-set-state */
-import React from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import PropTypes from 'prop-types';
-import { Alert, Container } from 'reactstrap';
+import { useLocation } from 'react-router-dom';
+import { Alert, Container } from 'react-bootstrap';
 import cloneDeep from 'lodash/cloneDeep';
 
 import withValidation from '../Validation';
-import { convertParams, getFrameworkData, getStatus } from '../helpers';
+import {
+  convertParams,
+  getFrameworkData,
+  getStatus,
+} from '../perf-helpers/helpers';
 import {
   summaryStatusMap,
   endpoints,
   notSupportedAlertFiltersMessage,
-} from '../constants';
+} from '../perf-helpers/constants';
 import {
   createQueryParams,
   getApiUrl,
@@ -28,136 +32,262 @@ import LoadingSpinner from '../../shared/LoadingSpinner';
 
 import AlertsViewControls from './AlertsViewControls';
 
-class AlertsView extends React.Component {
-  constructor(props) {
-    super(props);
-    const { frameworks, validated } = this.props;
-    const extendedOptions = this.extendDropdownOptions(frameworks);
-    this.state = {
-      filters: this.getFiltersFromParams(validated, extendedOptions),
-      frameworkOptions: extendedOptions,
-      page: validated.page ? parseInt(validated.page, 10) : 1,
-      errorMessages: [],
-      alertSummaries: [],
-      issueTrackers: [],
-      notSupportedAlertFilters: [],
-      loading: false,
-      optionCollectionMap: null,
-      count: 0,
-      id: validated.id,
-      bugTemplate: null,
-      totalPages: 0,
-    };
-  }
+function AlertsView({
+  validated,
+  frameworks,
+  user,
+  projects,
+  performanceTags,
+  ...otherProps
+}) {
+  const location = useLocation();
+  const prevLocationSearch = useRef(location.search);
 
-  componentDidMount() {
-    this.fetchAlertSummaries();
-  }
-
-  componentDidUpdate(prevProps, prevState) {
-    const { count, frameworkOptions } = this.state;
-    const { validated } = this.props;
-    const prevValitated = prevProps.validated;
-
-    if (prevState.count !== count) {
-      this.setState({ totalPages: this.generatePages(count) });
-    }
-
-    // filters updated directly in the url
-    if (
-      validated.hideAssignedToOthers !== prevValitated.hideAssignedToOthers ||
-      validated.hideImprovements !== prevValitated.hideImprovements ||
-      validated.hideDwnToInv !== prevValitated.hideDwnToInv ||
-      validated.filterText !== prevValitated.filterText ||
-      validated.status !== prevValitated.status ||
-      validated.framework !== prevValitated.framework
-    ) {
-      this.setFiltersState(
-        this.getFiltersFromParams(validated, frameworkOptions),
-        false,
-      );
-    }
-
-    const params = parseQueryParams(this.props.location.search);
-    // we're using local state for id instead of validated.id because once
-    // the user navigates from the id=<alert> view back to the main alerts view
-    // the Validation component won't reset the id (since the query param doesn't exist
-    // unless there is a value)
-    if (this.props.location.search !== prevProps.location.search) {
-      this.setState({ id: params.id || null }, this.fetchAlertSummaries);
-      if (params.id) {
-        validated.updateParams({ hideDwnToInv: 0 });
-      }
-    }
-  }
-
-  getFiltersFromParams = (validated, frameworkOptions) => {
-    return {
-      status: this.getDefaultStatus(),
-      framework: getFrameworkData({
-        validated,
-        frameworks: frameworkOptions,
-      }),
-      filterText: this.getDefaultFilterText(),
-      hideImprovements: convertParams(validated, 'hideImprovements'),
-      hideDownstream: convertParams(validated, 'hideDwnToInv'),
-      hideAssignedToOthers: convertParams(validated, 'hideAssignedToOthers'),
-    };
-  };
-
-  getDefaultStatus = () => {
-    const { validated } = this.props;
-
-    const statusParam = convertParams(validated, 'status');
-    if (!statusParam) {
-      return Object.keys(summaryStatusMap)[1];
-    }
-    return getStatus(parseInt(validated.status, 10));
-  };
-
-  getDefaultFilterText = () => {
-    const { filterText } = this.props.validated;
-    return filterText === undefined || filterText === null ? '' : filterText;
-  };
-
-  setFiltersState = async (updatedFilters, doUpdateParams = true) => {
-    const { filters } = this.state;
-    const currentFilters = cloneDeep(filters);
-    Object.assign(currentFilters, updatedFilters);
-
-    if (this.isListMode()) {
-      if (doUpdateParams) {
-        this.props.validated.updateParams(
-          this.getParamsFromFilters(updatedFilters),
-        );
-      }
-      this.setState({ filters: currentFilters }, this.fetchAlertSummaries);
-    } else {
-      this.setState({ filters: currentFilters });
-    }
-    this.setState({
-      notSupportedAlertFilters: this.selectNotSupportedFilters(
-        currentFilters.filterText,
-      ),
-    });
-  };
-
-  isListMode = () => {
-    return Boolean(!this.state.id);
-  };
-
-  extendDropdownOptions = (frameworks) => {
+  const extendedOptions = useMemo(() => {
     const frameworkOptions = cloneDeep(frameworks);
     const ignoreFrameworks = { id: -1, name: 'all frameworks' };
     frameworkOptions.unshift(ignoreFrameworks);
+    const allSheriffedFrameworks = {
+      id: -2,
+      name: 'all sheriffed frameworks',
+    };
+    frameworkOptions.unshift(allSheriffedFrameworks);
     return frameworkOptions;
+  }, [frameworks]);
+
+  const getDefaultStatus = (params) => {
+    const statusParam = convertParams(params, 'status');
+    if (!statusParam) {
+      return Object.keys(summaryStatusMap)[1];
+    }
+    return getStatus(parseInt(params.status, 10));
   };
 
-  getParamsFromFilters = (filters) => {
+  const getDefaultFilterText = (params) => {
+    const { filterText } = params;
+    return filterText === undefined || filterText === null ? '' : filterText;
+  };
+
+  const getFiltersFromParams = useCallback(
+    (params, frameworkOptions = extendedOptions) => {
+      return {
+        status: getDefaultStatus(params),
+        framework: getFrameworkData({
+          validated: params,
+          frameworks: frameworkOptions,
+        }),
+        filterText: getDefaultFilterText(params),
+        hideDownstream: convertParams(params, 'hideDwnToInv'),
+        hideAssignedToOthers: convertParams(params, 'hideAssignedToOthers'),
+        monitoredAlerts: convertParams(params, 'monitoredAlerts'),
+      };
+    },
+    [extendedOptions],
+  );
+
+  const [filters, setFilters] = useState(() =>
+    getFiltersFromParams(validated),
+  );
+  const [page, setPage] = useState(
+    validated.page ? parseInt(validated.page, 10) : 1,
+  );
+  const [errorMessages, setErrorMessages] = useState([]);
+  const [alertSummaries, setAlertSummaries] = useState([]);
+  const [issueTrackers, setIssueTrackers] = useState([]);
+  const [notSupportedAlertFilters, setNotSupportedAlertFilters] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [optionCollectionMap, setOptionCollectionMap] = useState(null);
+  const [count, setCount] = useState(0);
+  const [id, setId] = useState(validated.id);
+  const [totalPages, setTotalPages] = useState(0);
+
+  // Refs to hold latest state for use in callbacks
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+  const idRef = useRef(id);
+  idRef.current = id;
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const issueTrackersRef = useRef(issueTrackers);
+  issueTrackersRef.current = issueTrackers;
+  const optionCollectionMapRef = useRef(optionCollectionMap);
+  optionCollectionMapRef.current = optionCollectionMap;
+  const alertSummariesRef = useRef(alertSummaries);
+  alertSummariesRef.current = alertSummaries;
+  const countRef = useRef(count);
+  countRef.current = count;
+  const errorMessagesRef = useRef(errorMessages);
+  errorMessagesRef.current = errorMessages;
+
+  const isListMode = useCallback(() => {
+    return Boolean(!idRef.current);
+  }, []);
+
+  const generatePages = (cnt) => {
+    const pages = [];
+    for (let num = 1; num <= cnt; num++) {
+      pages.push(num);
+    }
+    return pages;
+  };
+
+  const composeParams = useCallback(
+    (alertId, pg, framework, status) => {
+      const params = alertId
+        ? { id: alertId }
+        : {
+            framework: framework.id,
+            page: pg,
+            status: summaryStatusMap[status],
+          };
+
+      const doNotFilter = -1;
+      const allSheriffedFrameworksID = -2;
+      const listMode = !alertId;
+
+      if (listMode && params.status === doNotFilter) {
+        delete params.status;
+      }
+
+      if (listMode) {
+        if (params.framework === allSheriffedFrameworksID) {
+          params.show_sheriffed_frameworks = true;
+        }
+        if (
+          [doNotFilter, allSheriffedFrameworksID].includes(params.framework)
+        ) {
+          delete params.framework;
+        }
+      }
+
+      return params;
+    },
+    [],
+  );
+
+  const fetchAlertSummaries = useCallback(
+    async (alertId = idRef.current, update = false, pg = pageRef.current) => {
+      setLoading(!update);
+      setErrorMessages([]);
+
+      const currentFilters = filtersRef.current;
+      const currentErrorMessages = errorMessagesRef.current;
+      const currentIssueTrackers = issueTrackersRef.current;
+      const currentOptionCollectionMap = optionCollectionMapRef.current;
+      const currentAlertSummaries = alertSummariesRef.current;
+      const currentCount = countRef.current;
+
+      const {
+        status,
+        framework,
+        filterText,
+        hideDownstream,
+        hideAssignedToOthers,
+        monitoredAlerts,
+      } = currentFilters;
+
+      setPage(pg);
+      const updates = {};
+      const params = composeParams(alertId, pg, framework, status);
+
+      const listMode = !alertId;
+
+      if (listMode) {
+        if (filterText) {
+          params.filter_text = filterText;
+        }
+        if (status === 'all regressions') {
+          delete params.status;
+          params.hide_improvements = true;
+        }
+        if (hideDownstream) {
+          params.hide_related_and_invalid = hideDownstream;
+        }
+        if (hideAssignedToOthers) {
+          params.with_assignee = user.username;
+        }
+        if (monitoredAlerts) {
+          params.monitored_alerts = monitoredAlerts;
+        }
+      }
+
+      const url = getApiUrl(
+        `${endpoints.alertSummary}${createQueryParams(params)}`,
+      );
+
+      if (!currentIssueTrackers.length && !currentOptionCollectionMap) {
+        const [newOptionCollectionMap, newIssueTrackers] = await Promise.all([
+          OptionCollectionModel.getMap(),
+          getData(getApiUrl(endpoints.issueTrackers)),
+        ]);
+
+        setOptionCollectionMap(newOptionCollectionMap);
+        const trackerResponse = processResponse(
+          newIssueTrackers,
+          'issueTrackers',
+          currentErrorMessages,
+        );
+        if (trackerResponse.issueTrackers) {
+          setIssueTrackers(trackerResponse.issueTrackers);
+        }
+        if (trackerResponse.errorMessages) {
+          updates.errorMessages = trackerResponse.errorMessages;
+        }
+      }
+
+      const data = await getData(url);
+      const response = processResponse(
+        data,
+        'alertSummaries',
+        currentErrorMessages,
+      );
+
+      if (response.alertSummaries) {
+        const summary = response.alertSummaries;
+
+        if (update && summary.results.length !== 0) {
+          const newSummaries = [...currentAlertSummaries];
+          const index = newSummaries.findIndex(
+            (item) => item.id === summary.results[0].id,
+          );
+          newSummaries.splice(index, 1, summary.results[0]);
+          setAlertSummaries(newSummaries);
+        } else {
+          setAlertSummaries(update ? currentAlertSummaries : summary.results);
+        }
+        setCount(update ? currentCount : Math.ceil(summary.count / 10));
+      } else if (response.errorMessages) {
+        setErrorMessages(response.errorMessages);
+      }
+
+      if (updates.errorMessages) {
+        setErrorMessages(updates.errorMessages);
+      }
+      setLoading(false);
+    },
+    [composeParams, user],
+  );
+
+  const selectNotSupportedFilters = useCallback(
+    (userInput) => {
+      const userInputArray = userInput.split(' ');
+      const repositories = projects.map(({ name }) => name);
+      const optionsCollection = Object.values(
+        optionCollectionMapRef.current || {},
+      );
+      const allNotSupportedFilters = [...repositories, ...optionsCollection];
+      return allNotSupportedFilters.filter((elem) =>
+        userInputArray.includes(elem),
+      );
+    },
+    [projects],
+  );
+
+  const getParamsFromFilters = (updatedFilters) => {
     return {
-      page: 1, // default value
+      page: 1,
       ...Object.fromEntries(
-        Object.entries(filters).map(([filterName, filterValue]) => {
+        Object.entries(updatedFilters).map(([filterName, filterValue]) => {
           switch (filterName) {
             case 'framework':
               return [filterName, filterValue.id];
@@ -165,7 +295,6 @@ class AlertsView extends React.Component {
               return [filterName, summaryStatusMap[filterValue]];
             case 'hideDownstream':
               return ['hideDwnToInv', +filterValue];
-            case 'hideImprovements':
             case 'hideAssignedToOthers':
               return [filterName, +filterValue];
             default:
@@ -176,220 +305,147 @@ class AlertsView extends React.Component {
     };
   };
 
-  getCurrentPages = () => {
-    const { page, totalPages } = this.state;
+  const setFiltersState = useCallback(
+    async (updatedFilters, doUpdateParams = true) => {
+      const currentFilters = cloneDeep(filtersRef.current);
+      Object.assign(currentFilters, updatedFilters);
+
+      if (isListMode()) {
+        if (doUpdateParams) {
+          validated.updateParams(getParamsFromFilters(updatedFilters));
+        }
+        setFilters(currentFilters);
+        // fetchAlertSummaries will be triggered by the filters change
+      } else {
+        setFilters(currentFilters);
+      }
+      setNotSupportedAlertFilters(
+        selectNotSupportedFilters(currentFilters.filterText),
+      );
+    },
+    [isListMode, validated, selectNotSupportedFilters],
+  );
+
+  // Update totalPages when count changes
+  useEffect(() => {
+    setTotalPages(generatePages(count));
+  }, [count]);
+
+  // componentDidMount
+  useEffect(() => {
+    fetchAlertSummaries();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // componentDidUpdate - detect location.search changes
+  useEffect(() => {
+    if (location.search === prevLocationSearch.current) {
+      prevLocationSearch.current = location.search;
+      return;
+    }
+
+    const params = parseQueryParams(location.search);
+    const prevParams = parseQueryParams(prevLocationSearch.current);
+    prevLocationSearch.current = location.search;
+
+    if (
+      params.id !== prevParams.id ||
+      params.status !== prevParams.status ||
+      params.framework !== prevParams.framework ||
+      params.filterText !== prevParams.filterText ||
+      params.hideDwnToInv !== prevParams.hideDwnToInv ||
+      params.hideAssignedToOthers !== prevParams.hideAssignedToOthers ||
+      params.monitoredAlerts !== prevParams.monitoredAlerts
+    ) {
+      const newId = params.id || null;
+      const newFilters = getFiltersFromParams(params);
+      setId(newId);
+      setFilters(newFilters);
+      // Need to fetch with the new values
+      idRef.current = newId;
+      filtersRef.current = newFilters;
+      fetchAlertSummaries(newId);
+    } else if (params.page && params.page !== prevParams.page) {
+      fetchAlertSummaries(undefined, false, parseInt(params.page, 10));
+    }
+  }, [location.search, getFiltersFromParams, fetchAlertSummaries]);
+
+  const getCurrentPages = () => {
     if (totalPages.length === 5 || !totalPages.length) {
       return totalPages;
+    }
+    if (page + 4 > totalPages.length) {
+      return totalPages.slice(-5);
     }
     return totalPages.slice(page - 1, page + 4);
   };
 
-  generatePages = (count) => {
-    const pages = [];
-    for (let num = 1; num <= count; num++) {
-      pages.push(num);
-    }
-    return pages;
-  };
+  const pageNums = getCurrentPages();
 
-  composeParams = (id, page, framework, status) => {
-    const params = id
-      ? { id }
-      : { framework: framework.id, page, status: summaryStatusMap[status] };
+  return (
+    <ErrorBoundary
+      errorClasses={errorMessageClass}
+      message={genericErrorMessage}
+    >
+      <Container fluid className="pt-5 max-width-default">
+        {loading && <LoadingSpinner />}
 
-    // -1 ('all') is created for UI purposes but is not a valid API parameter
-    const doNotFilter = -1;
-    const listMode = !id;
+        {errorMessages.length > 0 && (
+          <Container className="pt-5 px-0 max-width-default">
+            <ErrorMessages errorMessages={errorMessages} />
+          </Container>
+        )}
 
-    if (listMode && params.status === doNotFilter) {
-      delete params.status;
-    }
-    if (listMode && params.framework === doNotFilter) {
-      delete params.framework;
-    }
+        {!user.isStaff && (
+          <Alert variant="info">
+            You must be logged into perfherder/treeherder and be a sheriff to
+            make changes
+          </Alert>
+        )}
 
-    return params;
-  };
+        {notSupportedAlertFilters.length > 0 && (
+          <Alert variant="warning">
+            {notSupportedAlertFiltersMessage(notSupportedAlertFilters)}
+          </Alert>
+        )}
 
-  selectNotSupportedFilters = (userInput) => {
-    /* Following filters are not supported (see bug 1616215 for more details):
-     * - `option`, because of technical dept, as described in bug 1616212
-     * - `repository`, because it has never been enabled & the new dropdown items could falsely hint it is.
-     */
-    const { projects } = this.props;
-    const { optionCollectionMap } = this.state;
-    const userInputArray = userInput.split(' ');
-
-    const repositories = projects.map(({ name }) => name);
-    const optionsCollection = Object.values(optionCollectionMap);
-
-    const allNotSupportedFilters = [...repositories, ...optionsCollection];
-    return allNotSupportedFilters.filter((elem) =>
-      userInputArray.includes(elem),
-    );
-  };
-
-  async fetchAlertSummaries(id = this.state.id, update = false, page = 1) {
-    // turn off loading when update is true (used to update alert statuses)
-    this.setState({ loading: !update, errorMessages: [] });
-    const { user } = this.props;
-    const {
-      filters,
-      errorMessages,
-      issueTrackers,
-      optionCollectionMap,
-      alertSummaries,
-      count,
-    } = this.state;
-    const {
-      status,
-      framework,
-      filterText,
-      hideImprovements,
-      hideDownstream,
-      hideAssignedToOthers,
-    } = filters;
-
-    this.setState({ page });
-    let updates = { loading: false };
-    const params = this.composeParams(id, page, framework, status);
-
-    if (this.isListMode()) {
-      if (filterText) {
-        params.filter_text = filterText;
-      }
-      if (hideImprovements) {
-        params.hide_improvements = hideImprovements;
-      }
-      if (hideDownstream) {
-        params.hide_related_and_invalid = hideDownstream;
-      }
-      if (hideAssignedToOthers) {
-        params.with_assignee = user.username;
-      }
-    }
-
-    const url = getApiUrl(
-      `${endpoints.alertSummary}${createQueryParams(params)}`,
-    );
-    if (!issueTrackers.length && !optionCollectionMap) {
-      const [optionCollectionMap, issueTrackers] = await Promise.all([
-        OptionCollectionModel.getMap(),
-        getData(getApiUrl(endpoints.issueTrackers)),
-      ]);
-
-      updates = {
-        ...updates,
-        ...{ optionCollectionMap },
-        ...processResponse(issueTrackers, 'issueTrackers', errorMessages),
-      };
-    }
-    const data = await getData(url);
-    const response = processResponse(data, 'alertSummaries', errorMessages);
-
-    if (response.alertSummaries) {
-      const summary = response.alertSummaries;
-
-      // used with the id argument to update one specific alert summary in the array of
-      // alert summaries that's been updated based on an action taken in the AlertActionPanel
-      if (update) {
-        const index = alertSummaries.findIndex(
-          (item) => item.id === summary.results[0].id,
-        );
-
-        alertSummaries.splice(index, 1, summary.results[0]);
-      }
-      updates = {
-        ...updates,
-        ...{
-          alertSummaries: update ? alertSummaries : summary.results,
-          count: update ? count : Math.ceil(summary.count / 10),
-        },
-      };
-    } else {
-      updates = { ...updates, ...response };
-    }
-
-    this.setState(updates);
-  }
-
-  render() {
-    const { user } = this.props;
-    const {
-      filters,
-      errorMessages,
-      loading,
-      alertSummaries,
-      frameworkOptions,
-      issueTrackers,
-      notSupportedAlertFilters,
-      optionCollectionMap,
-      bugTemplate,
-      page,
-      count,
-    } = this.state;
-
-    // this is not strictly accurate since we have no way of knowing the final count
-    // until the results are filtered (and we're only retrieving 10 results at a time)
-    const pageNums = this.getCurrentPages();
-
-    return (
-      <ErrorBoundary
-        errorClasses={errorMessageClass}
-        message={genericErrorMessage}
-      >
-        <Container fluid className="pt-5 max-width-default">
-          {loading && <LoadingSpinner />}
-
-          {errorMessages.length > 0 && (
-            <Container className="pt-5 px-0 max-width-default">
-              <ErrorMessages errorMessages={errorMessages} />
-            </Container>
-          )}
-
-          {!user.isStaff && (
-            <Alert color="info">
-              You must be logged into perfherder/treeherder and be a sheriff to
-              make changes
-            </Alert>
-          )}
-
-          {notSupportedAlertFilters.length > 0 && (
-            <Alert color="warning">
-              {notSupportedAlertFiltersMessage(notSupportedAlertFilters)}
-            </Alert>
-          )}
-
-          <AlertsViewControls
-            isListMode={this.isListMode()}
-            filters={filters}
-            pageNums={pageNums}
-            alertSummaries={alertSummaries}
-            frameworkOptions={frameworkOptions}
-            issueTrackers={issueTrackers}
-            optionCollectionMap={optionCollectionMap}
-            fetchAlertSummaries={(id, update = true, page) =>
-              this.fetchAlertSummaries(id, update, page)
-            }
-            updateViewState={(state) => this.setState(state)}
-            setFiltersState={this.setFiltersState}
-            bugTemplate={bugTemplate}
-            user={user}
-            page={page}
-            count={count}
-            {...this.props}
-          />
-          {!loading && alertSummaries.length === 0 && (
-            <p className="lead text-center">No alerts to show</p>
-          )}
-        </Container>
-      </ErrorBoundary>
-    );
-  }
+        <AlertsViewControls
+          isListMode={isListMode()}
+          filters={filters}
+          pageNums={pageNums}
+          alertSummaries={alertSummaries}
+          frameworkOptions={extendedOptions}
+          issueTrackers={issueTrackers}
+          optionCollectionMap={optionCollectionMap}
+          fetchAlertSummaries={(alertId, update = true, pg) =>
+            fetchAlertSummaries(alertId, update, pg)
+          }
+          updateViewState={(state) => {
+            if (state.alertSummaries !== undefined)
+              setAlertSummaries(state.alertSummaries);
+            if (state.errorMessages !== undefined)
+              setErrorMessages(state.errorMessages);
+            if (state.count !== undefined) setCount(state.count);
+          }}
+          setFiltersState={setFiltersState}
+          user={user}
+          page={page}
+          count={count}
+          validated={validated}
+          projects={projects}
+          frameworks={frameworks}
+          performanceTags={performanceTags}
+          {...otherProps}
+        />
+        {!loading && alertSummaries.length === 0 && (
+          <p className="lead text-center">No alerts to show</p>
+        )}
+      </Container>
+    </ErrorBoundary>
+  );
 }
 
 AlertsView.propTypes = {
-  location: PropTypes.shape({}),
   user: PropTypes.shape({}).isRequired,
   validated: PropTypes.shape({
     updateParams: PropTypes.func.isRequired,
@@ -398,10 +454,6 @@ AlertsView.propTypes = {
   projects: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   frameworks: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   performanceTags: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
-};
-
-AlertsView.defaultProps = {
-  location: null,
 };
 
 export default withValidation(

@@ -1,6 +1,10 @@
-# Exclude all files but those used by the `Dockerfile` to speed up
-# the transferring of the build context during the Docker build.
-# The rest of the source will be made available via bind mounts.
-
-*
-!requirements/
+node_modules
+.tox
+.git
+.venv
+.env
+.build
+.build-docs
+.pytest_cache
+.coverage
+.ruff_cache

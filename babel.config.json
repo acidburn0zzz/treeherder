@@ -1,0 +1,25 @@
+{
+  "presets": [
+    [
+      "@babel/preset-env",
+      {
+        "debug": false,
+        "useBuiltIns": false,
+        "targets": {
+          "browsers": [
+            "last 1 Chrome versions",
+            "last 1 Edge versions",
+            "Firefox 115",
+            "last 1 Safari versions"
+          ]
+        }
+      }
+    ],
+    [
+      "@babel/preset-react",
+      {
+        "runtime": "automatic"
+      }
+    ]
+  ]
+}

@@ -1,27 +1,81 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Row } from 'reactstrap';
+import { Button, Container } from 'react-bootstrap';
 
 import FilterControls from '../../shared/FilterControls';
-import { summaryStatusMap } from '../constants';
+import { summaryStatusMap, scrollTypes } from '../perf-helpers/constants';
+import PaginationGroup from '../shared/Pagination';
+import { sortData } from '../perf-helpers/sort';
 
 import AlertTable from './AlertTable';
-import PaginationGroup from './Pagination';
 
 export default class AlertsViewControls extends React.Component {
+  constructor(props) {
+    super(props);
+    const { alertSummaries = [], filters } = this.props;
+    this.alertsRef = new Array(alertSummaries.length)
+      .fill(null)
+      .map(() => React.createRef());
+    this.state = {
+      disableHideDownstream: ['invalid', 'reassigned', 'downstream'].includes(
+        filters.status,
+      ),
+      currentAlert: -1,
+      alertsLength: alertSummaries.length,
+      disableButtons: {
+        prev: true,
+        next: false,
+      },
+    };
+  }
+
+  componentDidUpdate(prevProps) {
+    const { alertSummaries = [] } = this.props;
+    const alertsLength = alertSummaries.length;
+
+    if (alertSummaries !== prevProps.alertSummaries) {
+      this.alertsRef = new Array(alertsLength)
+        .fill(null)
+        .map(() => React.createRef());
+
+      this.setState({
+        currentAlert: -1,
+        alertsLength,
+        disableButtons: {
+          prev: true,
+          next: false,
+        },
+      });
+    }
+  }
+
   updateFilterText = (filterText) => {
     this.props.setFiltersState({ filterText });
   };
 
   updateFilter = (filter) => {
-    const { setFiltersState, filters } = this.props;
+    const { setFiltersState, filters, updateViewState } = this.props;
     const prevValue = filters[filter];
     setFiltersState({ [filter]: !prevValue });
+    updateViewState({ page: 1 });
   };
 
   updateStatus = (status) => {
-    const { setFiltersState } = this.props;
-    setFiltersState({ status });
+    const { setFiltersState, updateViewState } = this.props;
+
+    const isInvalidStatus = [
+      'invalid',
+      'reassigned',
+      'downstream',
+      'all statuses',
+    ].includes(status);
+
+    this.setState({
+      disableHideDownstream:
+        status === 'all statuses' ? false : isInvalidStatus,
+    });
+    setFiltersState({ status, hideDownstream: !isInvalidStatus });
+    updateViewState({ page: 1 });
   };
 
   updateFramework = (selectedFramework) => {
@@ -29,35 +83,77 @@ export default class AlertsViewControls extends React.Component {
     const framework = frameworkOptions.find(
       (item) => item.name === selectedFramework,
     );
-    updateViewState({ bugTemplate: null });
+    updateViewState({ page: 1 });
     setFiltersState({ framework }, this.fetchAlertSummaries);
   };
 
+  updateCurrentAlert = async (currentAlert) => {
+    const { disableButtons, alertsLength } = this.state;
+    disableButtons.next = currentAlert === alertsLength - 1;
+    disableButtons.prev = currentAlert === 0;
+
+    this.setState({ currentAlert, disableButtons }, () => {
+      this.alertsRef[currentAlert].current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start',
+      });
+    });
+  };
+
+  onScrollAlert = (type) => {
+    const { alertsLength } = this.state;
+    let { currentAlert } = this.state;
+
+    if (type === scrollTypes.next && currentAlert !== alertsLength - 1) {
+      currentAlert += 1;
+    }
+
+    if (type === scrollTypes.prev && currentAlert !== 0) {
+      currentAlert -= 1;
+    }
+
+    this.updateCurrentAlert(currentAlert);
+  };
+
   render() {
+    const { disableButtons } = this.state;
     const {
-      alertSummaries,
+      alertSummaries = [],
       fetchAlertSummaries,
       pageNums,
       validated,
-      page,
-      count,
+      page = 1,
+      count = 1,
       isListMode,
       user,
-      frameworkOptions,
+      frameworkOptions = [],
       filters,
     } = this.props;
     const {
       filterText,
-      hideImprovements,
       hideDownstream,
       hideAssignedToOthers,
       framework,
       status,
     } = filters;
 
+    let sortedFrameworks = sortData(frameworkOptions, 'name', false);
+    const allFrameworks = 'all frameworks';
+    const allSheriffedFrameworks = 'all sheriffed frameworks';
+    const platformMicrobench = 'platform_microbench';
+    const telemetry = 'telemetry';
+
+    sortedFrameworks = sortedFrameworks.filter(
+      (framework) =>
+        framework.name !== platformMicrobench &&
+        framework.name !== telemetry &&
+        framework.name !== allFrameworks &&
+        framework.name !== allSheriffedFrameworks,
+    );
+
     const frameworkNames =
-      frameworkOptions && frameworkOptions.length
-        ? frameworkOptions.map((item) => item.name)
+      sortedFrameworks?.length
+        ? sortedFrameworks.map((item) => item.name)
         : [];
 
     const alertDropdowns = [
@@ -72,19 +168,17 @@ export default class AlertsViewControls extends React.Component {
         selectedItem: framework.name,
         updateData: this.updateFramework,
         namespace: 'framework',
+        pinned: [allFrameworks, allSheriffedFrameworks],
+        otherPinned: [platformMicrobench, telemetry],
       },
     ];
 
     const alertCheckboxes = [
       {
-        text: 'Hide improvements',
-        state: hideImprovements,
-        stateName: 'hideImprovements',
-      },
-      {
         text: 'Hide downstream / reassigned to / invalid',
         state: hideDownstream,
         stateName: 'hideDownstream',
+        disable: this.state.disableHideDownstream,
       },
     ];
 
@@ -93,6 +187,7 @@ export default class AlertsViewControls extends React.Component {
         text: 'My alerts',
         state: hideAssignedToOthers,
         stateName: 'hideAssignedToOthers',
+        disable: false,
       });
     }
 
@@ -100,7 +195,32 @@ export default class AlertsViewControls extends React.Component {
 
     return (
       <React.Fragment>
+        {alertSummaries.length > 1 && (
+          <Container className="sticky-scroll-nav-top max-width-default position-fixed mb-4 px-4">
+            <Container className="bg-white max-width-default pb-1">
+              <div className="d-flex justify-content-end mb-1 gap-2">
+                <Button
+                  variant="darker-info"
+                  onClick={() => this.onScrollAlert(scrollTypes.prev)}
+                  disabled={disableButtons.prev}
+                  data-testid="scroll-prev-alert"
+                >
+                  Previous alert
+                </Button>
+                <Button
+                  variant="darker-info"
+                  onClick={() => this.onScrollAlert(scrollTypes.next)}
+                  disabled={disableButtons.next}
+                  data-testid="scroll-next-alert"
+                >
+                  Next alert
+                </Button>
+              </div>
+            </Container>
+          </Container>
+        )}
         <FilterControls
+          filteredTextValue={filterText}
           dropdownOptions={isListMode ? alertDropdowns : []}
           filterOptions={alertCheckboxes}
           updateFilter={this.updateFilter}
@@ -110,44 +230,42 @@ export default class AlertsViewControls extends React.Component {
         />
         {pageNums
           ? hasMorePages() && (
-              <Row className="justify-content-center">
+              <div className="d-flex justify-content-center my-3">
                 <PaginationGroup
                   viewablePageNums={pageNums}
                   updateParams={validated.updateParams}
                   currentPage={page}
                   count={count}
-                  fetchData={fetchAlertSummaries}
                 />
-              </Row>
+              </div>
             )
           : null}
         {alertSummaries.length > 0 &&
-          alertSummaries.map((alertSummary) => (
-            <AlertTable
-              filters={{
-                filterText,
-                hideImprovements,
-                hideDownstream,
-                hideAssignedToOthers,
-              }}
-              key={alertSummary.id}
-              alertSummary={alertSummary}
-              fetchAlertSummaries={fetchAlertSummaries}
-              user={user}
-              {...this.props}
-            />
+          alertSummaries.map((alertSummary, index) => (
+            <div key={alertSummary.id} ref={this.alertsRef[index]}>
+              <AlertTable
+                filters={{
+                  filterText,
+                  hideDownstream,
+                  hideAssignedToOthers,
+                }}
+                alertSummary={alertSummary}
+                fetchAlertSummaries={fetchAlertSummaries}
+                user={user}
+                {...this.props}
+              />
+            </div>
           ))}
         {pageNums
           ? hasMorePages() && (
-              <Row className="justify-content-center">
+              <div className="d-flex justify-content-center my-3">
                 <PaginationGroup
                   viewablePageNums={pageNums}
                   updateParams={validated.updateParams}
                   currentPage={page}
                   count={count}
-                  fetchData={fetchAlertSummaries}
                 />
-              </Row>
+              </div>
             )
           : null}
       </React.Fragment>
@@ -162,7 +280,6 @@ AlertsViewControls.propTypes = {
   isListMode: PropTypes.bool.isRequired,
   filters: PropTypes.shape({
     filterText: PropTypes.string.isRequired,
-    hideImprovements: PropTypes.bool.isRequired,
     hideDownstream: PropTypes.bool.isRequired,
     hideAssignedToOthers: PropTypes.bool.isRequired,
     framework: PropTypes.shape({}).isRequired,
@@ -176,11 +293,4 @@ AlertsViewControls.propTypes = {
   frameworkOptions: PropTypes.arrayOf(PropTypes.shape({})),
   user: PropTypes.shape({}).isRequired,
   performanceTags: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
-};
-
-AlertsViewControls.defaultProps = {
-  alertSummaries: [],
-  frameworkOptions: [],
-  page: 1,
-  count: 1,
 };

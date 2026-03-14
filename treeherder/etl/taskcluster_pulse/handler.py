@@ -1,5 +1,4 @@
 # Code imported from https://github.com/taskcluster/taskcluster/blob/32629c562f8d6f5a6b608a3141a8ee2e0984619f/services/treeherder/src/handler.js
-import asyncio
 import logging
 import os
 
@@ -9,19 +8,19 @@ import slugid
 import taskcluster
 import taskcluster.aio
 import taskcluster_urls
+from django.conf import settings
 
 from treeherder.etl.schema import get_json_schema
-from treeherder.etl.taskcluster_pulse.parse_route import parseRoute
+from treeherder.etl.taskcluster_pulse.parse_route import parse_route
 
 env = environ.Env()
 logger = logging.getLogger(__name__)
-loop = asyncio.get_event_loop()
-projectsToIngest = env("PROJECTS_TO_INGEST", default=None)
-session = taskcluster.aio.createSession(loop=loop)
+projects_to_ingest = env("PROJECTS_TO_INGEST", default=None)
 
 
 # Build a mapping from exchange name to task status
 EXCHANGE_EVENT_MAP = {
+    "exchange/taskcluster-queue/v1/task-defined": "unscheduled",
     "exchange/taskcluster-queue/v1/task-pending": "pending",
     "exchange/taskcluster-queue/v1/task-running": "running",
     "exchange/taskcluster-queue/v1/task-completed": "completed",
@@ -36,22 +35,22 @@ class PulseHandlerError(Exception):
     pass
 
 
-def stateFromRun(jobRun):
-    return "completed" if jobRun["state"] in ("exception", "failed") else jobRun["state"]
+def state_from_run(job_run):
+    return "completed" if job_run["state"] in ("exception", "failed") else job_run["state"]
 
 
-def resultFromRun(jobRun):
-    RUN_TO_RESULT = {
+def result_from_run(job_run):
+    run_to_result = {
         "completed": "success",
         "failed": "fail",
     }
-    state = jobRun["state"]
-    if state in list(RUN_TO_RESULT.keys()):
-        return RUN_TO_RESULT[state]
+    state = job_run["state"]
+    if state in list(run_to_result.keys()):
+        return run_to_result[state]
     elif state == "exception":
-        reasonResolved = jobRun.get("reasonResolved")
-        if reasonResolved in ["canceled", "superseded"]:
-            return reasonResolved
+        reason_resolved = job_run.get("reasonResolved")
+        if reason_resolved in ["canceled", "superseded"]:
+            return reason_resolved
         return "exception"
     else:
         return "unknown"
@@ -59,13 +58,13 @@ def resultFromRun(jobRun):
 
 # Creates a log entry for Treeherder to retrieve and parse.  This log is
 # displayed on the Treeherder Log Viewer once parsed.
-def createLogReference(root_url, taskId, runId):
-    logUrl = taskcluster_urls.api(
+def create_log_reference(root_url, task_id, run_id):
+    log_url = taskcluster_urls.api(
         root_url, "queue", "v1", "task/{taskId}/runs/{runId}/artifacts/public/logs/live_backing.log"
-    ).format(taskId=taskId, runId=runId)
+    ).format(taskId=task_id, runId=run_id)
     return {
         "name": "live_backing_log",
-        "url": logUrl,
+        "url": log_url,
     }
 
 
@@ -73,43 +72,51 @@ def createLogReference(root_url, taskId, runId):
 # the route is parsed into distinct parts used for constructing the
 # Treeherder job message.
 # TODO: Refactor https://bugzilla.mozilla.org/show_bug.cgi?id=1560596
-def parseRouteInfo(prefix, taskId, routes, task):
-    matchingRoutes = list(filter(lambda route: route.split(".")[0] == "tc-treeherder", routes))
+def parse_route_info(prefix, task_id, routes, task):
+    matching_routes = list(filter(lambda route: route.split(".")[0] == "tc-treeherder", routes))
 
-    if len(matchingRoutes) != 1:
+    if len(matching_routes) != 1:
         raise PulseHandlerError(
             "Could not determine Treeherder route. Either there is no route, "
             + "or more than one matching route exists."
-            + "Task ID: {taskId} Routes: {routes}".format(taskId=taskId, routes=routes)
+            + f"Task ID: {task_id} Routes: {routes}"
         )
 
-    parsedRoute = parseRoute(matchingRoutes[0])
+    parsed_route = parse_route(matching_routes[0])
 
-    return parsedRoute
+    return parsed_route
 
 
-def validateTask(task):
-    treeherderMetadata = task.get("extra", {}).get("treeherder")
-    if not treeherderMetadata:
-        logger.debug("Task metadata is missing Treeherder job configuration.")
+def validate_task(task, task_id, run_id):
+    treeherder_metadata = task.get("extra", {}).get("treeherder")
+    if not treeherder_metadata:
+        logger.debug(
+            f"Task metadata is missing Treeherder job configuration for task {task_id}, run {run_id}"
+        )
         return False
     try:
-        jsonschema.validate(treeherderMetadata, get_json_schema("task-treeherder-config.yml"))
+        jsonschema.validate(treeherder_metadata, get_json_schema("task-treeherder-config.yml"))
     except (jsonschema.ValidationError, jsonschema.SchemaError) as e:
-        logger.error("JSON Schema validation error during Taskcluser message ingestion: %s", e)
+        logger.error(
+            f"JSON Schema validation error during Taskcluser message ingestion for task {task_id}, run {run_id}: {e}"
+        )
         return False
     return True
 
 
-def ignore_task(task, taskId, rootUrl, project):
+def ignore_task(task, task_id, root_url, project):
     ignore = False
     # This logic is useful to reduce the number of tasks we ingest and requirying
     # less dynos and less database writes. You can adjust PROJECTS_TO_INGEST on the app to meet your needs
-    if projectsToIngest and project not in projectsToIngest.split(','):
-        logger.debug("Ignoring tasks not matching PROJECTS_TO_INGEST (Task id: %s)", taskId)
+    if projects_to_ingest and project not in projects_to_ingest.split(","):
+        logger.debug("Ignoring tasks not matching PROJECTS_TO_INGEST (Task id: %s)", task_id)
         return True
 
-    mobile_repos = ('android-components', 'fenix', 'reference-browser')
+    mobile_repos = (
+        "reference-browser",
+        "mozilla-vpn-client",
+        "mozilla-vpn-client-release",
+    )
     if project in mobile_repos:
         envs = task["payload"].get("env", {})
         if envs.get("MOBILE_BASE_REPOSITORY"):
@@ -119,36 +126,41 @@ def ignore_task(task, taskId, rootUrl, project):
                     # Ignore tasks that are associated to a pull request
                     if envs["MOBILE_BASE_REPOSITORY"] != envs["MOBILE_HEAD_REPOSITORY"]:
                         logger.debug(
-                            "Task: %s belong to a pull request OR branch which we ignore.", taskId
+                            "Task: %s belong to a pull request OR branch which we ignore.", task_id
                         )
                         ignore = True
                     # Bug 1587542 - Temporary change to ignore Github tasks not associated to 'master'
-                    if envs["MOBILE_HEAD_REF"] not in ("refs/heads/master", "master"):
-                        logger.info("Task: %s is not for the `master` branch.", taskId)
+                    if envs["MOBILE_HEAD_REF"] not in (
+                        "refs/heads/master",
+                        "master",
+                        "refs/heads/main",
+                        "main",
+                    ):
+                        logger.info("Task: %s is not for the `master` branch.", task_id)
                         ignore = True
             except KeyError:
                 pass
         else:
             # The decision task is the ultimate source for determining this information
-            queue = taskcluster.Queue({"rootUrl": rootUrl}, session=session)
+            queue = taskcluster.Queue({"rootUrl": root_url})
             decision_task = queue.task(task["taskGroupId"])
             scopes = decision_task["metadata"].get("source")
             ignore = True
             for scope in scopes:
                 # e.g. assume:repo:github.com/mozilla-mobile/fenix:branch:master
-                if scope.find('branch:master') != -1:
+                if scope.find("branch:master") != -1 or scope.find("branch:main") != -1:
                     ignore = False
                     break
 
             # This handles nightly tasks
             # e.g. index.mobile.v2.fenix.branch.master.latest.taskgraph.decision-nightly
             for route in decision_task["routes"]:
-                if route.find('master') != -1:
+                if route.find("master") != -1 or route.find("main") != -1:
                     ignore = False
                     break
 
     if ignore:
-        logger.debug('Task to be ignored ({})'.format(taskId))
+        logger.debug(f"Task to be ignored ({task_id})")
 
     return ignore
 
@@ -158,49 +170,50 @@ def ignore_task(task, taskId, rootUrl, project):
 # Only messages that contain the properly formatted routing key and contains
 # treeherder job information in task.extra.treeherder are accepted
 # This will generate a list of messages that need to be ingested by Treeherder
-async def handleMessage(message, taskDefinition=None):
-    jobs = []
-    taskId = message["payload"]["status"]["taskId"]
-    asyncQueue = taskcluster.aio.Queue({"rootUrl": message["root_url"]}, session=session)
-    task = (await asyncQueue.task(taskId)) if not taskDefinition else taskDefinition
+async def handle_message(message, task_definition=None):
+    async with taskcluster.aio.createSession() as session:
+        jobs = []
+        task_id = message["payload"]["status"]["taskId"]
+        # task-defined messages don't have runId since the task has no runs yet
+        run_id = message["payload"].get("runId", 0)
+        if task_definition:
+            task = task_definition
+        else:
+            async_queue = taskcluster.aio.Queue({"rootUrl": message["root_url"]}, session=session)
+            with settings.STATSD_CLIENT.timer("taskcluster_fetch_definition"):
+                task = await async_queue.task(task_id)
 
-    try:
-        parsedRoute = parseRouteInfo("tc-treeherder", taskId, task["routes"], task)
-    except PulseHandlerError as e:
-        logger.debug("%s", str(e))
+        try:
+            parsed_route = parse_route_info("tc-treeherder", task_id, task["routes"], task)
+        except PulseHandlerError as e:
+            logger.debug("%s", str(e))
+            return jobs
+
+        if ignore_task(task, task_id, message["root_url"], parsed_route["project"]):
+            return jobs
+
+        logger.debug("Message received for task %s", task_id)
+
+        # Validation failures are common and logged, so do nothing more.
+        if not validate_task(task, task_id, run_id):
+            return jobs
+
+        task_type = EXCHANGE_EVENT_MAP.get(message["exchange"])
+
+        if not task_type:
+            raise Exception("Unknown exchange: {exchange}".format(exchange=message["exchange"]))
+        elif task_type == "unscheduled":
+            jobs.append(handle_task_defined(parsed_route, task, message))
+        elif task_type == "pending":
+            jobs.append(handle_task_pending(parsed_route, task, message))
+        elif task_type == "running":
+            jobs.append(handle_task_running(parsed_route, task, message))
+        elif task_type in ("completed", "failed"):
+            jobs.append(await handle_task_completed(parsed_route, task, message, session))
+        elif task_type == "exception":
+            jobs.append(await handle_task_exception(parsed_route, task, message, session))
+
         return jobs
-
-    if ignore_task(task, taskId, message["root_url"], parsedRoute['project']):
-        return jobs
-
-    logger.debug("Message received for task %s", taskId)
-
-    # Validation failures are common and logged, so do nothing more.
-    if not validateTask(task):
-        return jobs
-
-    taskType = EXCHANGE_EVENT_MAP.get(message["exchange"])
-
-    # Originally this code was only within the "pending" case, however, in order to support
-    # ingesting all tasks at once which might not have "pending" case
-    # If the job is an automatic rerun we mark the previous run as "retry"
-    # This will only work if the previous run has not yet been processed by Treeherder
-    # since _remove_existing_jobs() will prevent it
-    if message["payload"]["runId"] > 0:
-        jobs.append(await handleTaskRerun(parsedRoute, task, message))
-
-    if not taskType:
-        raise Exception("Unknown exchange: {exchange}".format(exchange=message["exchange"]))
-    elif taskType == "pending":
-        jobs.append(handleTaskPending(parsedRoute, task, message))
-    elif taskType == "running":
-        jobs.append(handleTaskRunning(parsedRoute, task, message))
-    elif taskType in ("completed", "failed"):
-        jobs.append(await handleTaskCompleted(parsedRoute, task, message))
-    elif taskType == "exception":
-        jobs.append(await handleTaskException(parsedRoute, task, message))
-
-    return jobs
 
 
 # Builds the basic Treeherder job message that's universal for all
@@ -208,31 +221,31 @@ async def handleMessage(message, taskDefinition=None):
 #
 # Specific handlers for each message type will add/remove information necessary
 # for the type of task event..
-def buildMessage(pushInfo, task, runId, payload):
-    taskId = payload["status"]["taskId"]
-    jobRun = payload["status"]["runs"][runId]
-    treeherderConfig = task["extra"]["treeherder"]
+def build_message(push_info, task, run_id, payload):
+    task_id = payload["status"]["taskId"]
+    job_run = payload["status"]["runs"][run_id]
+    treeherder_config = task["extra"]["treeherder"]
 
     job = {
         "buildSystem": "taskcluster",
         "owner": task["metadata"]["owner"],
-        "taskId": "{taskId}/{runId}".format(taskId=slugid.decode(taskId), runId=runId),
-        "retryId": runId,
+        "taskId": f"{slugid.decode(task_id)}/{run_id}",
+        "retryId": run_id,
         "isRetried": False,
         "display": {
             # jobSymbols could be an integer (i.e. Chunk ID) but need to be strings
             # for treeherder
-            "jobSymbol": str(treeherderConfig["symbol"]),
-            "groupSymbol": treeherderConfig.get("groupSymbol", "?"),
+            "jobSymbol": str(treeherder_config["symbol"]),
+            "groupSymbol": treeherder_config.get("groupSymbol", "?"),
             # Maximum job name length is 140 chars...
             "jobName": task["metadata"]["name"][0:139],
         },
-        "state": stateFromRun(jobRun),
-        "result": resultFromRun(jobRun),
-        "tier": treeherderConfig.get("tier", 1),
+        "state": state_from_run(job_run),
+        "result": result_from_run(job_run),
+        "tier": treeherder_config.get("tier", 1),
         "timeScheduled": task["created"],
-        "jobKind": treeherderConfig.get("jobKind", "other"),
-        "reason": treeherderConfig.get("reason", "scheduled"),
+        "jobKind": treeherder_config.get("jobKind", "other"),
+        "reason": treeherder_config.get("reason", "scheduled"),
         "jobInfo": {
             "links": [],
             "summary": task["metadata"]["description"],
@@ -241,126 +254,190 @@ def buildMessage(pushInfo, task, runId, payload):
     }
 
     job["origin"] = {
-        "kind": pushInfo["origin"],
-        "project": pushInfo["project"],
-        "revision": pushInfo["revision"],
+        "kind": push_info["origin"],
+        "project": push_info["project"],
+        "revision": push_info["revision"],
     }
 
-    if pushInfo["origin"] == "hg.mozilla.org":
-        job["origin"]["pushLogID"] = pushInfo["id"]
+    if push_info["origin"] == "hg.mozilla.org":
+        job["origin"]["pushLogID"] = push_info["id"]
     else:
-        job["origin"]["pullRequestID"] = pushInfo["id"]
-        job["origin"]["owner"] = pushInfo["owner"]
+        job["origin"]["pullRequestID"] = push_info["id"]
+        job["origin"]["owner"] = push_info["owner"]
 
     # Transform "collection" into an array of labels if task doesn't
     # define "labels".
-    labels = treeherderConfig.get("labels", [])
+    labels = treeherder_config.get("labels", [])
     if not labels:
-        if not treeherderConfig.get("collection"):
+        if not treeherder_config.get("collection"):
             labels = ["opt"]
         else:
-            labels = list(treeherderConfig["collection"].keys())
+            labels = list(treeherder_config["collection"].keys())
 
     job["labels"] = labels
 
-    machine = treeherderConfig.get("machine", {})
+    machine = treeherder_config.get("machine", {})
     job["buildMachine"] = {
-        "name": jobRun.get("workerId", "unknown"),
+        "name": job_run.get("workerId", "unknown"),
         "platform": machine.get("platform", task["workerType"]),
         "os": machine.get("os", "-"),
         "architecture": machine.get("architecture", "-"),
     }
 
-    if treeherderConfig.get("productName"):
-        job["productName"] = treeherderConfig["productName"]
+    if treeherder_config.get("productName"):
+        job["productName"] = treeherder_config["productName"]
 
-    if treeherderConfig.get("groupName"):
-        job["display"]["groupName"] = treeherderConfig["groupName"]
+    if treeherder_config.get("groupName"):
+        job["display"]["groupName"] = treeherder_config["groupName"]
 
     return job
 
 
-def handleTaskPending(pushInfo, task, message):
-    payload = message['payload']
-    return buildMessage(pushInfo, task, payload["runId"], payload)
+def handle_task_defined(push_info, task, message):
+    payload = message["payload"]
+    task_id = payload["status"]["taskId"]
+    treeherder_config = task["extra"]["treeherder"]
 
+    # Unscheduled tasks have no runs yet. Use runId=0 as placeholder.
+    # When task becomes pending, it gets its first run with runId=0, matching our placeholder.
+    run_id = 0
 
-async def handleTaskRerun(pushInfo, task, message):
-    payload = message['payload']
-    job = buildMessage(pushInfo, task, payload["runId"] - 1, payload)
-    job["state"] = "completed"
-    job["result"] = "fail"
-    job["isRetried"] = True
-    # reruns often have no logs, so in the interest of not linking to a 404'ing artifact,
-    # don't include a link
-    job["logs"] = []
-    job = await addArtifactUploadedLinks(
-        message["root_url"], payload["status"]["taskId"], payload["runId"] - 1, job
-    )
+    job = {
+        "buildSystem": "taskcluster",
+        "owner": task["metadata"]["owner"],
+        "taskId": f"{slugid.decode(task_id)}/{run_id}",
+        "retryId": run_id,
+        "isRetried": False,
+        "display": {
+            "jobSymbol": str(treeherder_config["symbol"]),
+            "groupSymbol": treeherder_config.get("groupSymbol", "?"),
+            "jobName": task["metadata"]["name"][0:139],
+        },
+        "state": "unscheduled",
+        "result": "unknown",
+        "tier": treeherder_config.get("tier", 1),
+        "timeScheduled": task["created"],
+        "jobKind": treeherder_config.get("jobKind", "other"),
+        "reason": treeherder_config.get("reason", "scheduled"),
+        "jobInfo": {
+            "links": [],
+            "summary": task["metadata"]["description"],
+        },
+        "version": 1,
+    }
+
+    job["origin"] = {
+        "kind": push_info["origin"],
+        "project": push_info["project"],
+        "revision": push_info["revision"],
+    }
+
+    if push_info["origin"] == "hg.mozilla.org":
+        job["origin"]["pushLogID"] = push_info["id"]
+    else:
+        job["origin"]["pullRequestID"] = push_info["id"]
+        job["origin"]["owner"] = push_info["owner"]
+
+    labels = treeherder_config.get("labels", [])
+    if not labels:
+        if not treeherder_config.get("collection"):
+            labels = ["opt"]
+        else:
+            labels = list(treeherder_config["collection"].keys())
+
+    job["labels"] = labels
+
+    machine = treeherder_config.get("machine", {})
+    job["buildMachine"] = {
+        "name": "unknown",
+        "platform": machine.get("platform", task["workerType"]),
+        "os": machine.get("os", "-"),
+        "architecture": machine.get("architecture", "-"),
+    }
+
+    if treeherder_config.get("productName"):
+        job["productName"] = treeherder_config["productName"]
+
+    if treeherder_config.get("groupName"):
+        job["display"]["groupName"] = treeherder_config["groupName"]
+
     return job
 
 
-def handleTaskRunning(pushInfo, task, message):
-    payload = message['payload']
-    job = buildMessage(pushInfo, task, payload["runId"], payload)
+def handle_task_pending(push_info, task, message):
+    payload = message["payload"]
+    return build_message(push_info, task, payload["runId"], payload)
+
+
+def handle_task_running(push_info, task, message):
+    payload = message["payload"]
+    job = build_message(push_info, task, payload["runId"], payload)
     job["timeStarted"] = payload["status"]["runs"][payload["runId"]]["started"]
     return job
 
 
-async def handleTaskCompleted(pushInfo, task, message):
-    payload = message['payload']
-    jobRun = payload["status"]["runs"][payload["runId"]]
-    job = buildMessage(pushInfo, task, payload["runId"], payload)
+async def handle_task_completed(push_info, task, message, session):
+    payload = message["payload"]
+    job_run = payload["status"]["runs"][payload["runId"]]
+    job = build_message(push_info, task, payload["runId"], payload)
 
-    job["timeStarted"] = jobRun["started"]
-    job["timeCompleted"] = jobRun["resolved"]
+    job["timeStarted"] = job_run["started"]
+    job["timeCompleted"] = job_run["resolved"]
     job["logs"] = [
-        createLogReference(message['root_url'], payload["status"]["taskId"], jobRun["runId"]),
+        create_log_reference(message["root_url"], payload["status"]["taskId"], job_run["runId"]),
     ]
-    job = await addArtifactUploadedLinks(
-        message["root_url"], payload["status"]["taskId"], payload["runId"], job
+    job = await add_artifact_uploaded_links(
+        message["root_url"], payload["status"]["taskId"], payload["runId"], job, session
     )
     return job
 
 
-async def handleTaskException(pushInfo, task, message):
-    payload = message['payload']
-    jobRun = payload["status"]["runs"][payload["runId"]]
+async def handle_task_exception(push_info, task, message, session):
+    payload = message["payload"]
+    runs = payload["status"]["runs"]
+    run_id = payload["runId"]
+    job_run = runs[run_id]
     # Do not report runs that were created as an exception.  Such cases
     # are deadline-exceeded
-    if jobRun["reasonCreated"] == "exception":
+    if job_run["reasonCreated"] == "exception":
         return
 
-    job = buildMessage(pushInfo, task, payload["runId"], payload)
+    job = build_message(push_info, task, payload["runId"], payload)
+
+    # Check if the next run was an automatic retry.
+    if len(runs) > run_id + 1:
+        next_run = runs[run_id + 1]
+        job["isRetried"] = next_run["reasonCreated"] in ("retry", "task-retry")
+
     # Jobs that get cancelled before running don't have a started time
-    if jobRun.get("started"):
-        job["timeStarted"] = jobRun["started"]
-    job["timeCompleted"] = jobRun["resolved"]
+    if job_run.get("started"):
+        job["timeStarted"] = job_run["started"]
+    job["timeCompleted"] = job_run["resolved"]
     # exceptions generally have no logs, so in the interest of not linking to a 404'ing artifact,
     # don't include a link
     job["logs"] = []
-    job = await addArtifactUploadedLinks(
-        message["root_url"], payload["status"]["taskId"], payload["runId"], job
+    job = await add_artifact_uploaded_links(
+        message["root_url"], payload["status"]["taskId"], run_id, job, session
     )
     return job
 
 
-async def fetchArtifacts(root_url, taskId, runId):
-    asyncQueue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
-    res = await asyncQueue.listArtifacts(taskId, runId)
+async def fetch_artifacts(root_url, task_id, run_id, session):
+    async_queue = taskcluster.aio.Queue({"rootUrl": root_url}, session=session)
+    res = await async_queue.listArtifacts(task_id, run_id)
     artifacts = res["artifacts"]
 
-    continuationToken = res.get("continuationToken")
-    while continuationToken is not None:
+    continuation_token = res.get("continuationToken")
+    while continuation_token is not None:
         continuation = {"continuationToken": res["continuationToken"]}
 
         try:
-            res = await asyncQueue.listArtifacts(taskId, runId, continuation)
+            res = await async_queue.listArtifacts(task_id, run_id, continuation)
         except Exception:
             break
 
         artifacts = artifacts.concat(res["artifacts"])
-        continuationToken = res.get("continuationToken")
+        continuation_token = res.get("continuationToken")
 
     return artifacts
 
@@ -369,12 +446,12 @@ async def fetchArtifacts(root_url, taskId, runId):
 # fetch them in order to determine if there is an error_summary log;
 # TODO refactor this when there is a way to only retrieve the error_summary
 # artifact: https://bugzilla.mozilla.org/show_bug.cgi?id=1629716
-async def addArtifactUploadedLinks(root_url, taskId, runId, job):
+async def add_artifact_uploaded_links(root_url, task_id, run_id, job, session):
     artifacts = []
     try:
-        artifacts = await fetchArtifacts(root_url, taskId, runId)
+        artifacts = await fetch_artifacts(root_url, task_id, run_id, session)
     except Exception:
-        logger.debug("Artifacts could not be found for task: %s run: %s", taskId, runId)
+        logger.debug("Artifacts could not be found for task: %s run: %s", task_id, run_id)
         return job
 
     seen = {}
@@ -388,7 +465,7 @@ async def addArtifactUploadedLinks(root_url, taskId, runId, job):
             seen[name] = [artifact["name"]]
         else:
             seen[name].append(artifact["name"])
-            name = "{name} ({length})".format(name=name, length=len(seen[name]) - 1)
+            name = f"{name} ({len(seen[name]) - 1})"
 
         links.append(
             {
@@ -399,7 +476,7 @@ async def addArtifactUploadedLinks(root_url, taskId, runId, job):
                     "queue",
                     "v1",
                     "task/{taskId}/runs/{runId}/artifacts/{artifact_name}".format(
-                        taskId=taskId, runId=runId, artifact_name=artifact["name"]
+                        taskId=task_id, runId=run_id, artifact_name=artifact["name"]
                     ),
                 ),
             }

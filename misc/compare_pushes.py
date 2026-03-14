@@ -1,9 +1,10 @@
 #!/usr/bin/env python
-""" Script to compare pushes from a Treeherder instance against production.
+"""Script to compare pushes from a Treeherder instance against production.
 
 This is useful to compare if pushes between two different instances have been
 ingested differently.
 """
+
 import argparse
 import logging
 
@@ -25,9 +26,9 @@ def main(args):
     production_client = TreeherderClient(server_url=HOSTS["production"])
 
     # Support comma separated projects
-    projects = args.projects.split(',')
+    projects = args.projects.split(",")
     for _project in projects:
-        logger.info("Comparing {} against production.".format(_project))
+        logger.info(f"Comparing {_project} against production.")
         # Remove properties that are irrelevant for the comparison
         pushes = compare_to_client.get_pushes(_project, count=50)
         for _push in sorted(pushes, key=lambda push: push["revision"]):

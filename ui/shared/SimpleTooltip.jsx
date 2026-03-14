@@ -1,53 +1,34 @@
-import React from 'react';
+
 import PropTypes from 'prop-types';
-import { UncontrolledTooltip } from 'reactstrap';
+import { OverlayTrigger, Tooltip } from 'react-bootstrap';
 
-export default class SimpleTooltip extends React.Component {
-  constructor(props) {
-    super(props);
-    this.tooltipRef = React.createRef();
-  }
+const SimpleTooltip = ({
+  text,
+  tooltipText,
+  placement = 'top',
+  textClass = '',
+  innerClassName = '',
+  autohide = true,
+}) => {
+  const tooltip = <Tooltip className={innerClassName}>{tooltipText}</Tooltip>;
 
-  render() {
-    const {
-      text,
-      tooltipText,
-      placement,
-      textClass,
-      tooltipClass,
-      autohide,
-    } = this.props;
-
-    return (
-      <React.Fragment>
-        <span ref={this.tooltipRef} className={textClass}>
-          {text}
-        </span>
-        <UncontrolledTooltip
-          placement={placement}
-          target={this.tooltipRef}
-          innerClassName={tooltipClass}
-          autohide={autohide}
-        >
-          {tooltipText}
-        </UncontrolledTooltip>
-      </React.Fragment>
-    );
-  }
-}
-SimpleTooltip.propTypes = {
-  text: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.string]).isRequired,
-  tooltipText: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.string])
-    .isRequired,
-  textClass: PropTypes.string,
-  placement: PropTypes.string,
-  tooltipClass: PropTypes.string,
-  autohide: PropTypes.bool,
+  return (
+    <OverlayTrigger
+      placement={placement}
+      overlay={tooltip}
+      delay={{ show: autohide ? 250 : 0, hide: autohide ? 250 : 0 }}
+    >
+      <span className={textClass}>{text}</span>
+    </OverlayTrigger>
+  );
 };
 
-SimpleTooltip.defaultProps = {
-  textClass: '',
-  placement: 'top',
-  tooltipClass: '',
-  autohide: true,
+export default SimpleTooltip;
+SimpleTooltip.propTypes = {
+  text: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.string]).isRequired,
+  tooltipText: PropTypes.oneOfType([PropTypes.shape({}), PropTypes.string]),
+  textClass: PropTypes.string,
+  placement: PropTypes.string,
+  innerClassName: PropTypes.string,
+  autohide: PropTypes.bool,
 };

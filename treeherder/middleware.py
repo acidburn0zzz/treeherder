@@ -1,7 +1,6 @@
 import re
 
 import newrelic.agent
-from django.urls import reverse
 from django.utils.deprecation import MiddlewareMixin
 from whitenoise.middleware import WhiteNoiseMiddleware
 
@@ -15,43 +14,48 @@ CSP_DIRECTIVES = [
     "script-src 'self' 'unsafe-eval' 'report-sample'",
     # The unsafe-inline is required for react-select's use of emotion (CSS in JS). See bug 1507903.
     # The Google entries are required for IFV's use of the Open Sans font from their CDN.
-    "style-src 'self' 'unsafe-inline' 'report-sample' https://fonts.googleapis.com https://stackpath.bootstrapcdn.com/bootstrap/4.4.1/css/bootstrap.min.css",
+    "style-src 'self' 'unsafe-inline' 'report-sample' https://fonts.googleapis.com https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css",
     "font-src 'self' https://fonts.gstatic.com",
     # The `data:` is required for images that were inlined by webpack's url-loader (as an optimisation).
     "img-src 'self' data:",
-    "connect-src 'self' https://community-tc.services.mozilla.com https://firefox-ci-tc.services.mozilla.com https://*.taskcluster-artifacts.net https://taskcluster-artifacts.net https://treestatus.mozilla-releng.net https://bugzilla.mozilla.org https://auth.mozilla.auth0.com https://stage.taskcluster.nonprod.cloudops.mozgcp.net/ https://artifacts.tcstage.mozaws.net/ https://*.artifacts.tcstage.mozaws.net/ https://insights-api.newrelic.com",
+    "connect-src 'self' https://community-tc.services.mozilla.com https://firefox-ci-tc.services.mozilla.com https://*.taskcluster-artifacts.net https://taskcluster-artifacts.net https://lando.services.mozilla.com https://treestatus.prod.lando.prod.cloudops.mozgcp.net https://bugzilla.mozilla.org https://auth.mozilla.auth0.com https://stage.taskcluster.nonprod.cloudops.mozgcp.net https://insights-api.newrelic.com https://prototype.treeherder.allizom.org https://treeherder.allizom.org",
     # Required since auth0-js performs session renewals in an iframe.
     "frame-src 'self' https://auth.mozilla.auth0.com",
-    "report-uri {}".format(reverse('csp-report')),
 ]
-CSP_HEADER = '; '.join(CSP_DIRECTIVES)
+
+
+def add_headers_function(headers, path, url):
+    """
+    This allows custom headers be be added to static assets responses.
+    NB: It does not affect dynamically generated Django views/templates,
+    such as API responses, or the browse-able API/auto-generated docs,
+    since they are not served by the WhiteNoise middleware.
+    """
+    from django.urls import reverse
+
+    report_uri = "report-uri {}".format(reverse("csp-report"))
+    if report_uri not in CSP_DIRECTIVES:
+        CSP_DIRECTIVES.append(report_uri)
+
+    csp_header = "; ".join(CSP_DIRECTIVES)
+    headers["Content-Security-Policy"] = csp_header
 
 
 class CustomWhiteNoise(WhiteNoiseMiddleware):
     """
-    Extends WhiteNoiseMiddleware with two additional features:
-    1) Adds a `Content-Security-Policy` header to all static file responses.
-    2) Allows WhiteNoise to recognise Neutrino-generated hashed filenames as "immutable",
-       so that WhiteNoise will then set long Cache-Control max-age headers for them.
+    Extends WhiteNoiseMiddleware to allow WhiteNoise to recognise Yarn-generated
+    hashed filenames as "immutable", so that WhiteNoise will then set long
+    Cache-Control max-age headers for them.
 
     For the stock functionality provided by WhiteNoiseMiddleware see:
-    http://whitenoise.evans.io/
+    https://whitenoise.readthedocs.io/
     """
 
-    # Matches Neutrino's style of hashed filename URLs, eg:
+    # Matches Yarn's style of hashed filename URLs, eg:
     #   /assets/index.1d85033a.js
     #   /assets/2.379789df.css.map
     #   /assets/fontawesome-webfont.af7ae505.woff2
-    IMMUTABLE_FILE_RE = re.compile(r'^/assets/.*\.[a-f0-9]{8}\..*')
-
-    def add_headers_function(self, headers, path, url):
-        """
-        This allows custom headers be be added to static assets responses.
-        NB: It does not affect dynamically generated Django views/templates,
-        such as API responses, or the browse-able API/auto-generated docs,
-        since they are not served by the WhiteNoise middleware.
-        """
-        headers['Content-Security-Policy'] = CSP_HEADER
+    IMMUTABLE_FILE_RE = re.compile(r"^/assets/.*\.[a-f0-9]{8}\..*")
 
     def immutable_file_test(self, path, url):
         """
@@ -72,5 +76,5 @@ class NewRelicMiddleware(MiddlewareMixin):
     def process_request(self, request):
         # The New Relic Python agent only submits the User Agent to APM (for exceptions and
         # slow transactions), so for use in Insights we have to add it as a customer parameter.
-        if 'HTTP_USER_AGENT' in request.META:
-            newrelic.agent.add_custom_parameter('user_agent', request.META['HTTP_USER_AGENT'])
+        if "HTTP_USER_AGENT" in request.META:
+            newrelic.agent.add_custom_attribute("user_agent", request.META["HTTP_USER_AGENT"])

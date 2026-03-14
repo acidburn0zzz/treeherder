@@ -1,14 +1,20 @@
-from django.conf.urls import include, url
+from django.urls import include, re_path
+from drf_spectacular.views import SpectacularAPIView
 from rest_framework import routers
 
 from treeherder.webapp.api import (
     auth,
     bug,
+    bug_creation,
     bugzilla,
     changelog,
+    classification,
     csp_report,
+    groups,
+    hash,
     infra_compare,
     intermittents_view,
+    internal_issue,
     investigated_test,
     job_log_url,
     jobs,
@@ -17,7 +23,6 @@ from treeherder.webapp.api import (
     performance_data,
     push,
     refdata,
-    seta,
 )
 
 # router for views that are bound to a project
@@ -29,124 +34,159 @@ project_bound_router = routers.SimpleRouter()
 # DEPRECATED (in process): The UI is transitioning to the /jobs/ endpoint
 # from the default_router.
 project_bound_router.register(
-    r'jobs',
+    r"jobs",
     jobs.JobsProjectViewSet,
-    basename='jobs',
+    basename="jobs",
 )
 
 project_bound_router.register(
-    r'seta/job-priorities', seta.SetaJobPriorityViewSet, basename='seta-job-priorities'
-)
-
-project_bound_router.register(
-    r'push',
+    r"push",
     push.PushViewSet,
-    basename='push',
+    basename="push",
 )
 
+project_bound_router.register(
+    r"hash",
+    hash.HashViewSet,
+    basename="hash",
+)
 
 project_bound_router.register(
-    r'investigated-tests',
+    r"investigated-tests",
     investigated_test.InvestigatedViewSet,
-    basename='investigated-tests',
+    basename="investigated-tests",
 )
 
 project_bound_router.register(
-    r'note',
+    r"note",
     note.NoteViewSet,
-    basename='note',
+    basename="note",
 )
 
 project_bound_router.register(
-    r'bug-job-map',
+    r"classification",
+    classification.ClassificationViewSet,
+    basename="classification",
+)
+
+project_bound_router.register(
+    r"bug-job-map",
     bug.BugJobMapViewSet,
-    basename='bug-job-map',
+    basename="bug-job-map",
 )
 
 project_bound_router.register(
-    r'job-log-url',
+    r"job-log-url",
     job_log_url.JobLogUrlViewSet,
-    basename='job-log-url',
+    basename="job-log-url",
 )
 
 project_bound_router.register(
-    r'performance/data', performance_data.PerformanceDatumViewSet, basename='performance-data'
+    r"performance/data", performance_data.PerformanceDatumViewSet, basename="performance-data"
 )
 
 project_bound_router.register(
-    r'performance/signatures',
+    r"performance/job-data", performance_data.PerformanceJobViewSet, basename="performance-job-data"
+)
+
+project_bound_router.register(
+    r"performance/signatures",
     performance_data.PerformanceSignatureViewSet,
-    basename='performance-signatures',
+    basename="performance-signatures",
 )
 
 project_bound_router.register(
-    r'performance/platforms',
+    r"performance/platforms",
     performance_data.PerformancePlatformViewSet,
-    basename='performance-signatures-platforms',
+    basename="performance-signatures-platforms",
 )
 
 
 # refdata endpoints:
 default_router = routers.DefaultRouter()
-default_router.register(r'jobs', jobs.JobsViewSet, basename='jobs')
-default_router.register(r'repository', refdata.RepositoryViewSet)
+default_router.register(r"jobs", jobs.JobsViewSet, basename="jobs")
+default_router.register(r"repository", refdata.RepositoryViewSet)
 default_router.register(
-    r'taskclustermetadata', refdata.TaskclusterMetadataViewSet, basename='taskclustermetadata'
+    r"taskclustermetadata", refdata.TaskclusterMetadataViewSet, basename="taskclustermetadata"
 )
 default_router.register(
-    r'optioncollectionhash', refdata.OptionCollectionHashViewSet, basename='optioncollectionhash'
+    r"optioncollectionhash", refdata.OptionCollectionHashViewSet, basename="optioncollectionhash"
 )
-default_router.register(r'failureclassification', refdata.FailureClassificationViewSet)
-default_router.register(r'user', refdata.UserViewSet, basename='user')
+default_router.register(r"failureclassification", refdata.FailureClassificationViewSet)
 default_router.register(
-    r'machineplatforms', machine_platforms.MachinePlatformsViewSet, basename='machineplatforms'
+    r"bugzilla-component",
+    bug_creation.FilesBugzillaMapViewSet,
+    basename="bugzilla-component",
+)
+default_router.register(r"user", refdata.UserViewSet, basename="user")
+default_router.register(
+    r"machineplatforms", machine_platforms.MachinePlatformsViewSet, basename="machineplatforms"
 )
 default_router.register(
-    r'performance/tag', performance_data.PerformanceTagViewSet, basename='performance-tags'
+    r"performance/tag", performance_data.PerformanceTagViewSet, basename="performance-tags"
 )
 default_router.register(
-    r'performance/alertsummary',
+    r"performance/alertsummary",
     performance_data.PerformanceAlertSummaryViewSet,
-    basename='performance-alert-summaries',
+    basename="performance-alert-summaries",
 )
 default_router.register(
-    r'performance/alert', performance_data.PerformanceAlertViewSet, basename='performance-alerts'
+    r"performance/alert", performance_data.PerformanceAlertViewSet, basename="performance-alerts"
 )
 default_router.register(
-    r'performance/framework',
+    r"performance/framework",
     performance_data.PerformanceFrameworkViewSet,
-    basename='performance-frameworks',
+    basename="performance-frameworks",
 )
 default_router.register(
-    r'performance/bug-template',
+    r"performance/bug-template",
     performance_data.PerformanceBugTemplateViewSet,
-    basename='performance-bug-template',
+    basename="performance-bug-template",
 )
 default_router.register(
-    r'performance/issue-tracker',
+    r"performance/issue-tracker",
     performance_data.PerformanceIssueTrackerViewSet,
-    basename='performance-issue-tracker',
+    basename="performance-issue-tracker",
 )
 default_router.register(
-    r'performance/validity-dashboard',
+    r"performance/validity-dashboard",
     performance_data.TestSuiteHealthViewSet,
-    basename='validity-dashboard',
+    basename="validity-dashboard",
 )
-default_router.register(r'bugzilla', bugzilla.BugzillaViewSet, basename='bugzilla')
-default_router.register(r'auth', auth.AuthViewSet, basename='auth')
-default_router.register(r'changelog', changelog.ChangelogViewSet, basename='changelog')
+default_router.register(r"bugzilla", bugzilla.BugzillaViewSet, basename="bugzilla")
+default_router.register(r"auth", auth.AuthViewSet, basename="auth")
+default_router.register(r"changelog", changelog.ChangelogViewSet, basename="changelog")
 
 urlpatterns = [
-    url(r'^project/(?P<project>[\w-]{0,50})/', include(project_bound_router.urls)),
-    url(r'^', include(default_router.urls)),
-    url(r'^failures/$', intermittents_view.Failures.as_view(), name='failures'),
-    url(r'^failuresbybug/$', intermittents_view.FailuresByBug.as_view(), name='failures-by-bug'),
-    url(r'^failurecount/$', intermittents_view.FailureCount.as_view(), name='failure-count'),
-    url(r'^infracompare/$', infra_compare.InfraCompareView.as_view(), name='infra-compare'),
-    url(
-        r'^performance/summary/$',
-        performance_data.PerformanceSummary.as_view(),
-        name='performance-summary',
+    re_path(r"^groupsummary/$", groups.SummaryByGroupName.as_view(), name="groupsummary"),
+    re_path(r"^project/(?P<project>[\w-]{0,50})/", include(project_bound_router.urls)),
+    re_path(r"^", include(default_router.urls)),
+    re_path(r"^failures/$", intermittents_view.Failures.as_view(), name="failures"),
+    re_path(
+        r"^failuresbybug/$",
+        intermittents_view.FailuresByBug.as_view(),
+        name="failures-by-bug",
     ),
-    url(r'^csp-report/$', csp_report.csp_report_collector, name='csp-report'),
+    re_path(r"^failurecount/$", intermittents_view.FailureCount.as_view(), name="failure-count"),
+    re_path(r"^infracompare/$", infra_compare.InfraCompareView.as_view(), name="infra-compare"),
+    re_path(
+        r"^performance/summary/$",
+        performance_data.PerformanceSummary.as_view(),
+        name="performance-summary",
+    ),
+    re_path(
+        r"^performance/alertsummary-tasks/$",
+        performance_data.PerformanceAlertSummaryTasks.as_view(),
+        name="performance-alertsummary-tasks",
+    ),
+    re_path(
+        r"^perfcompare/results/$",
+        performance_data.PerfCompareResults.as_view(),
+        name="perfcompare-results",
+    ),
+    re_path(r"^csp-report/$", csp_report.csp_report_collector, name="csp-report"),
+    re_path(r"^schema/", SpectacularAPIView.as_view(), name="openapi-schema"),
+    re_path(
+        r"^internal_issue/", internal_issue.CreateInternalIssue.as_view(), name="internal_issue"
+    ),
 ]

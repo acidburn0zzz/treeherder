@@ -1,6 +1,6 @@
 import json
 
-from treeherder.log_parser.parsers import EmptyPerformanceData, PerformanceParser
+from treeherder.log_parser.parsers import EmptyPerformanceDataError, PerformanceParser
 
 
 def test_performance_log_parsing_malformed_perfherder_data():
@@ -15,7 +15,7 @@ def test_performance_log_parsing_malformed_perfherder_data():
     try:
         # Empty performance data
         parser.parse_line("PERFHERDER_DATA: {}", 2)
-    except EmptyPerformanceData:
+    except EmptyPerformanceDataError:
         pass
 
     valid_perfherder_data = {
@@ -27,6 +27,6 @@ def test_performance_log_parsing_malformed_perfherder_data():
             }
         ],
     }
-    parser.parse_line('PERFHERDER_DATA: {}'.format(json.dumps(valid_perfherder_data)), 3)
+    parser.parse_line(f"PERFHERDER_DATA: {json.dumps(valid_perfherder_data)}", 3)
 
     assert parser.get_artifact() == [valid_perfherder_data]

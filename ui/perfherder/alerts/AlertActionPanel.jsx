@@ -1,6 +1,6 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Button, Row, Col } from 'reactstrap';
+import { Button, Row, Col } from 'react-bootstrap';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import {
   faCheck,
@@ -10,8 +10,8 @@ import {
 } from '@fortawesome/free-solid-svg-icons';
 
 import SimpleTooltip from '../../shared/SimpleTooltip';
-import { alertStatusMap } from '../constants';
-import { modifyAlert } from '../helpers';
+import { alertStatusMap } from '../perf-helpers/constants';
+import { modifyAlert as modifyAlertHelper } from '../perf-helpers/helpers';
 import { processErrors } from '../../helpers/http';
 
 import AlertModal from './AlertModal';
@@ -25,18 +25,18 @@ export default class AlertActionPanel extends React.Component {
     };
   }
 
-  modifySelectedAlerts = (selectedAlerts, modification) =>
-    Promise.all(
-      selectedAlerts.map((alert) =>
-        this.props.modifyAlert(alert, modification),
-      ),
+  modifySelectedAlerts = (selectedAlerts, modification) => {
+    const { modifyAlert = modifyAlertHelper } = this.props;
+    return Promise.all(
+      selectedAlerts.map((alert) => modifyAlert(alert, modification)),
     );
+  };
 
   updateAndFetch = async (newStatus, alertId = null) => {
     const {
       selectedAlerts,
       alertSummaries,
-      alertSummary,
+      alertSummary = null,
       fetchAlertSummaries,
       updateViewState,
     } = this.props;
@@ -53,6 +53,14 @@ export default class AlertActionPanel extends React.Component {
       return updateViewState({ errorMessages });
     }
 
+    // update field related summary id for each alert of the summary
+    alertSummary.alerts.forEach((alertFromSummary) => {
+      selectedAlerts.forEach((selectedAlert) => {
+        if (alertFromSummary.id === selectedAlert.id)
+          alertFromSummary.related_summary_id = alertId;
+      });
+    });
+
     if (alertId) {
       otherAlertSummaries = alertSummaries.filter(
         (summary) => summary.id === alertId,
@@ -66,13 +74,34 @@ export default class AlertActionPanel extends React.Component {
         )
         .filter((summary) => summary !== undefined);
     }
-
-    const summariesToUpdate = [...[alertSummary], ...otherAlertSummaries];
+    const summariesToUpdate = [
+      ...new Set([...[alertSummary], ...otherAlertSummaries]),
+    ];
 
     // when an alert status is updated via the API, the corresponding
     // alertSummary status and any related summaries are updated (in the backend)
     // so we need to fetch them in order to capture the changes in the UI
-    summariesToUpdate.forEach((summary) => fetchAlertSummaries(summary.id));
+
+    // summaries from current page need to be fetched again if all alerts
+    // from a summary were reassigned or if a summary was reset
+    let refreshAlertsSummaries = true; // determines when summaries need to be refreshed
+    alertSummary.alerts.forEach((summary) => {
+      if (summary.related_summary_id === null) refreshAlertsSummaries = false;
+    });
+
+    const refreshStatus = ['reassigned', 'downstream'];
+
+    if (
+      (refreshStatus.includes(newStatus) && refreshAlertsSummaries) || // check if all alerts from summary were reassigned
+      newStatus === 'untriaged' // or check if alert summary was reset
+    ) {
+      // refresh all summaries for current page
+      fetchAlertSummaries(undefined, false);
+    } else {
+      // refresh in place targeted summaries
+      summariesToUpdate.forEach((summary) => fetchAlertSummaries(summary.id));
+    }
+
     this.clearSelectedAlerts();
   };
 
@@ -87,13 +116,34 @@ export default class AlertActionPanel extends React.Component {
   };
 
   updateAlerts = async (newStatus) => {
-    const { selectedAlerts, fetchAlertSummaries, alertSummary } = this.props;
+    const {
+      selectedAlerts,
+      fetchAlertSummaries,
+      alertSummary = null,
+    } = this.props;
 
     await this.modifySelectedAlerts(selectedAlerts, {
       status: alertStatusMap[newStatus],
     });
 
-    fetchAlertSummaries(alertSummary.id);
+    const untriagedAlerts = alertSummary.alerts.filter(
+      (alert) => alert.status === 0,
+    );
+    let refreshAlertsSummaries = false;
+
+    if (selectedAlerts.length === untriagedAlerts.length) {
+      refreshAlertsSummaries = untriagedAlerts.every((alert) =>
+        selectedAlerts.includes(alert),
+      );
+    }
+    const refreshStatus = 'invalid';
+
+    if (newStatus === refreshStatus && refreshAlertsSummaries) {
+      fetchAlertSummaries(undefined, false);
+    } else {
+      fetchAlertSummaries(alertSummary.id);
+    }
+
     this.clearSelectedAlerts();
   };
 
@@ -154,7 +204,7 @@ export default class AlertActionPanel extends React.Component {
               <SimpleTooltip
                 text={
                   <Button
-                    color="warning"
+                    variant="warning"
                     onClick={() => this.updateAndFetch('untriaged')}
                   >
                     Reset
@@ -171,7 +221,7 @@ export default class AlertActionPanel extends React.Component {
                 <SimpleTooltip
                   text={
                     <Button
-                      color="secondary"
+                      variant="secondary"
                       onClick={() => this.updateAlerts('acknowledged')}
                     >
                       <FontAwesomeIcon icon={faCheck} /> Acknowledge
@@ -185,7 +235,7 @@ export default class AlertActionPanel extends React.Component {
                 <SimpleTooltip
                   text={
                     <Button
-                      color="secondary"
+                      variant="secondary"
                       onClick={() => this.updateAlerts('invalid')}
                     >
                       <FontAwesomeIcon icon={faBan} /> Mark invalid
@@ -199,7 +249,7 @@ export default class AlertActionPanel extends React.Component {
                 <SimpleTooltip
                   text={
                     <Button
-                      color="secondary"
+                      variant="secondary"
                       onClick={() => this.toggle('showDownstreamModal')}
                     >
                       <FontAwesomeIcon icon={faLevelDownAlt} /> Mark downstream
@@ -213,7 +263,7 @@ export default class AlertActionPanel extends React.Component {
                 <SimpleTooltip
                   text={
                     <Button
-                      color="secondary"
+                      variant="secondary"
                       onClick={() => this.toggle('showReassignedModal')}
                     >
                       <FontAwesomeIcon icon={faArrowAltCircleRight} /> Reassign
@@ -239,9 +289,4 @@ AlertActionPanel.propTypes = {
   alertSummaries: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   updateViewState: PropTypes.func.isRequired,
   modifyAlert: PropTypes.func,
-};
-
-AlertActionPanel.defaultProps = {
-  alertSummary: null,
-  modifyAlert,
 };

@@ -1,11 +1,25 @@
+import os
+import pathlib
+
 import pytest
 
+from tests.conftest import SampleDataJSONLoader
 
-@pytest.fixture
-def job_from_try(eleven_job_blobs, create_jobs):
-    job_blob = eleven_job_blobs[0]
-    job = create_jobs([job_blob])[0]
+load_json_fixture = SampleDataJSONLoader("sherlock")
 
-    job.repository.is_try_repo = True
-    job.repository.save()
-    return job
+
+def pytest_collection_modifyitems(config, items):
+    for root, dirs, files in os.walk(pathlib.Path(__file__).parent):
+        for dir in dirs:
+            if dir in ["", "__pycache__"]:
+                continue
+
+            subfolder_path = pathlib.Path(__file__).parent / dir
+            for item in items:
+                if subfolder_path in pathlib.Path(item.fspath).parents:
+                    item.add_marker(pytest.mark.perf)
+
+        for file in files:
+            for item in items:
+                if str(item.fspath).endswith(file):
+                    item.add_marker(pytest.mark.perf)

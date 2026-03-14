@@ -1,4 +1,4 @@
-import React, { PureComponent } from 'react';
+import { PureComponent } from 'react';
 import PropTypes from 'prop-types';
 import groupBy from 'lodash/groupBy';
 import orderBy from 'lodash/orderBy';
@@ -22,7 +22,6 @@ class Action extends PureComponent {
       key,
       id: key.replace(/[^a-z0-9-]+/gi, ''), // make this a valid selector
       tests,
-      failedInParent: tests.filter((item) => item.failedInParent).length,
     }));
 
     return orderedBy === 'count'
@@ -51,7 +50,7 @@ class Action extends PureComponent {
     const groupedTests = this.getTestGroups(tests);
 
     return (
-      <div className="ml-4 mt-2">
+      <div className="ms-4 mt-2">
         <h5>{name}</h5>
         {groupedTests.map((test) => (
           <div key={test.key}>
@@ -80,7 +79,7 @@ class Action extends PureComponent {
 
 Action.propTypes = {
   name: PropTypes.string.isRequired,
-  tests: PropTypes.arrayOf(PropTypes.object).isRequired,
+  tests: PropTypes.arrayOf(PropTypes.shape({})).isRequired,
   groupedBy: PropTypes.string.isRequired,
   orderedBy: PropTypes.string.isRequired,
   revision: PropTypes.string.isRequired,

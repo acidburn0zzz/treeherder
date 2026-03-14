@@ -1,13 +1,24 @@
 import React from 'react';
 import PropTypes from 'prop-types';
-import { Button } from 'reactstrap';
+import { Button } from 'react-bootstrap';
+import { Link } from 'react-router-dom';
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
-import { faBug } from '@fortawesome/free-solid-svg-icons';
+import {
+  faBug,
+  faCircleExclamation,
+  faFilter,
+} from '@fortawesome/free-solid-svg-icons';
 
 import Clipboard from '../../Clipboard';
 import logviewerIcon from '../../../img/logviewerIcon.png';
 import { thBugSuggestionLimit } from '../../../helpers/constants';
-import { getLogViewerUrl } from '../../../helpers/url';
+import { isReftest } from '../../../helpers/job';
+import {
+  createQueryParams,
+  getLogViewerUrl,
+  parseQueryParams,
+} from '../../../helpers/url';
+import formatLogLineWithLinks from '../../../helpers/logFormatting';
 
 import BugListItem from './BugListItem';
 
@@ -25,15 +36,28 @@ export default class SuggestionsListItem extends React.Component {
     }));
   };
 
+  getPathFilter = (filterTestPath) => {
+    const path = filterTestPath[0].replace(/\/$/, '');
+    const filterParams = {
+      ...parseQueryParams(window.location.search),
+      test_paths: path,
+    };
+
+    return `${window.location.pathname}${createQueryParams(filterParams)}`;
+  };
+
   render() {
     const {
       suggestion,
       toggleBugFiler,
+      toggleInternalIssueFiler,
       selectedJob,
-      addBug,
-      repoName,
+      jobDetails,
+      addBug = null,
+      currentRepo,
       developerMode,
     } = this.props;
+    const repoName = currentRepo.name;
     const { suggestionShowMore } = this.state;
 
     const suggestions = [];
@@ -47,14 +71,16 @@ export default class SuggestionsListItem extends React.Component {
         >
           {suggestion.bugs.open_recent.map((bug) => (
             <BugListItem
-              key={bug.id}
+              key={bug.internal_id}
               bug={bug}
               suggestion={suggestion}
               selectedJob={selectedJob}
               addBug={addBug}
+              toggleBugFiler={toggleBugFiler}
               bugClassName={
                 developerMode ? 'text-darker-secondary small-text' : ''
               }
+              title={bug.resolution !== '' ? bug.resolution : ''}
             />
           ))}
         </ul>,
@@ -65,10 +91,11 @@ export default class SuggestionsListItem extends React.Component {
         suggestions.push(
           <Button
             key="show-hide-more"
-            color="link"
+            size="sm"
+            variant="outline-dark"
             rel="noopener"
             onClick={this.clickShowMore}
-            className={`bg-light px-2 py-1 btn btn-outline-secondary btn-xs my-2 show-hide-more ${
+            className={`show-more-suggestions my-2 ${
               developerMode && 'text-darker-secondary small-text'
             }`}
           >
@@ -91,12 +118,13 @@ export default class SuggestionsListItem extends React.Component {
               key={bug.id}
               bug={bug}
               suggestion={suggestion}
-              bugClassName={`${bug.resolution !== '' ? 'strike-through' : ''} ${
+              bugClassName={`${
                 developerMode ? 'text-darker-secondary small-text' : ''
               }`}
               title={bug.resolution !== '' ? bug.resolution : ''}
               selectedJob={selectedJob}
               addBug={addBug}
+              toggleBugFiler={toggleBugFiler}
             />
           ))}
         </ul>,
@@ -114,37 +142,19 @@ export default class SuggestionsListItem extends React.Component {
         </mark>,
       );
     }
+    const filterTestPath = suggestion.search.match(/([a-z_\-0-9]+[/])+/gi);
+
+    const line = formatLogLineWithLinks(
+      suggestion.search,
+      jobDetails,
+      selectedJob,
+    );
 
     return (
       <li>
         <div>
           {developerMode ? (
-            <a
-              href={getLogViewerUrl(
-                selectedJob.id,
-                repoName,
-                suggestion.line_number + 1,
-              )}
-              target="_blank"
-              rel="noopener noreferrer"
-              title="Go to this line in the log viewer"
-            >
-              <span className="align-middle link-style font-weight-500">
-                {suggestion.search}
-              </span>
-            </a>
-          ) : (
-            <span>
-              <Button
-                className="bg-light py-1 px-2 mr-2"
-                outline
-                style={{ fontSize: '8px' }}
-                onClick={() => toggleBugFiler(suggestion)}
-                title="file a bug for this failure"
-              >
-                <FontAwesomeIcon icon={faBug} title="File bug" />
-              </Button>
-              <span className="align-middle">{suggestion.search} </span>
+            <React.Fragment>
               <Clipboard
                 description=" text of error line"
                 text={suggestion.search}
@@ -154,6 +164,58 @@ export default class SuggestionsListItem extends React.Component {
                   selectedJob.id,
                   repoName,
                   suggestion.line_number + 1,
+                  selectedJob,
+                )}
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Go to this line in the log viewer"
+              >
+                <span className="align-middle link-style font-weight-400 font-size-12">
+                  {suggestion.search}
+                </span>
+              </a>
+              <br className="mb-3" />
+            </React.Fragment>
+          ) : (
+            <span>
+              <Button
+                className="bg-light py-2 px-2 me-2 failure-action-btn"
+                variant="outline-secondary"
+                onClick={() => toggleInternalIssueFiler(suggestion)}
+                title="File an internal issue for this failure"
+              >
+                <FontAwesomeIcon icon={faCircleExclamation} />
+              </Button>
+
+              {suggestion.showNewButton && (
+                <Button
+                  className="btn-orange border-outline-secondary"
+                  title="number of times this error message has been seen until now (including this run)"
+                >
+                  NEW
+                </Button>
+              )}
+
+              <span className="align-middle">{line} </span>
+              <Clipboard
+                description=" text of error line"
+                text={suggestion.search}
+              />
+              {filterTestPath && !developerMode && !isReftest(selectedJob) && (
+                <Link
+                  to={this.getPathFilter(filterTestPath)}
+                  className="px-1 text-darker-secondary"
+                  title={`Filter by test path: ${filterTestPath[0]}`}
+                >
+                  <FontAwesomeIcon icon={faFilter} />
+                </Link>
+              )}
+              <a
+                href={getLogViewerUrl(
+                  selectedJob.id,
+                  repoName,
+                  suggestion.line_number + 1,
+                  selectedJob,
                 )}
                 target="_blank"
                 rel="noopener noreferrer"
@@ -162,9 +224,17 @@ export default class SuggestionsListItem extends React.Component {
                 <img
                   alt="Logviewer"
                   src={logviewerIcon}
-                  className="logviewer-icon ml-1"
+                  className="logviewer-icon ms-1"
                 />
               </a>
+              <Button
+                className="bg-light py-2 px-2 ms-2 failure-action-btn"
+                variant="outline-secondary"
+                onClick={() => toggleBugFiler(suggestion)}
+                title="File a bug for this failure"
+              >
+                <FontAwesomeIcon icon={faBug} />
+              </Button>
             </span>
           )}
         </div>
@@ -184,11 +254,15 @@ export default class SuggestionsListItem extends React.Component {
 SuggestionsListItem.propTypes = {
   selectedJob: PropTypes.shape({}).isRequired,
   suggestion: PropTypes.shape({}).isRequired,
+  jobDetails: PropTypes.arrayOf(
+    PropTypes.shape({
+      url: PropTypes.string.isRequired,
+      value: PropTypes.string.isRequired,
+      title: PropTypes.string.isRequired,
+    }),
+  ).isRequired,
   toggleBugFiler: PropTypes.func.isRequired,
+  toggleInternalIssueFiler: PropTypes.func.isRequired,
   developerMode: PropTypes.bool.isRequired,
   addBug: PropTypes.func,
-};
-
-SuggestionsListItem.defaultProps = {
-  addBug: null,
 };

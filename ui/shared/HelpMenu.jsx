@@ -1,4 +1,4 @@
-import React from 'react';
+
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome';
 import { faGithub } from '@fortawesome/free-brands-svg-icons';
 import {
@@ -8,20 +8,16 @@ import {
 } from '@fortawesome/free-regular-svg-icons';
 import {
   faBug,
+  faCalculator,
   faCode,
   faQuestion,
   faQuestionCircle,
 } from '@fortawesome/free-solid-svg-icons';
-import {
-  DropdownMenu,
-  DropdownItem,
-  DropdownToggle,
-  UncontrolledDropdown,
-} from 'reactstrap';
+import { Dropdown } from 'react-bootstrap';
 
 const menuItems = [
   {
-    href: '/userguide.html',
+    href: '/userguide',
     icon: faQuestionCircle,
     text: 'User Guide',
   },
@@ -58,25 +54,26 @@ const menuItems = [
     text: 'Source',
   },
   {
-    href: 'https://whatsdeployed.io/s-dqv',
+    href: '/push-health/usage',
+    icon: faCalculator,
+    text: 'Push Health Try Usage',
+  },
+  {
+    href: 'https://whatsdeployed.io/s/BIY/Mozilla/Treeherder',
     icon: faQuestion,
     text: "What's Deployed?",
   },
 ];
 
 const HelpMenu = () => (
-  <UncontrolledDropdown>
-    <DropdownToggle className="btn-view-nav nav-menu-btn" caret>
-      <FontAwesomeIcon
-        icon={faQuestionCircle}
-        className="lightgray mr-1"
-        title="Treeherder help"
-      />
-    </DropdownToggle>
-    <DropdownMenu right className="icon-menu">
+  <Dropdown>
+    <Dropdown.Toggle className="btn-view-nav nav-menu-btn">
+      Help
+    </Dropdown.Toggle>
+    <Dropdown.Menu align="end" className="icon-menu">
       {menuItems.map((item) => (
-        <DropdownItem
-          tag="a"
+        <Dropdown.Item
+          as="a"
           target="_blank"
           rel="noopener noreferrer"
           href={item.href}
@@ -85,13 +82,13 @@ const HelpMenu = () => (
           <FontAwesomeIcon
             icon={item.icon}
             fixedWidth
-            className="midgray mr-2"
+            className="midgray me-2"
           />
           {item.text}
-        </DropdownItem>
+        </Dropdown.Item>
       ))}
-    </DropdownMenu>
-  </UncontrolledDropdown>
+    </Dropdown.Menu>
+  </Dropdown>
 );
 
 export default HelpMenu;
